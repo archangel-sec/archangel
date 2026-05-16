@@ -38,6 +38,7 @@ archangel-exec-format = { path = "crates/archangel-exec-format", version = "0.0.
 
 # Async runtime
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "signal", "sync", "time"] }
+async-trait = "0.1"
 
 # Errors
 thiserror = "1"
