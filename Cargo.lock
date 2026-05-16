@@ -73,6 +73,7 @@ version = "0.0.0"
 dependencies = [
  "archangel-core",
  "ed25519-dalek",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "sha2",
