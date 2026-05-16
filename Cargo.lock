@@ -197,6 +197,7 @@ dependencies = [
  "archangel-policy",
  "clap",
  "ed25519-dalek",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -6,9 +6,15 @@
 
 #![forbid(unsafe_code)]
 
+// Justification: this binary is still a stub. Writing a single diagnostic
+// line to stderr from `main` before the daemon proper exists is the
+// intended behavior; structured tracing is wired in when the runtime is.
+// (Workspace policy allows print_stderr in `main` with a justification.)
+#[allow(clippy::print_stderr)]
 fn main() -> std::process::ExitCode {
     eprintln!(
-        "archangeld {} — not yet implemented. See docs/ARCHITECTURE.md.",
+        "archangeld {} — daemon runtime not yet implemented; library \
+         (prompt builder, layers #1-#4) is available. See docs/ARCHITECTURE.md.",
         env!("CARGO_PKG_VERSION")
     );
     std::process::ExitCode::from(64)
