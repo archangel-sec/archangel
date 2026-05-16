@@ -99,6 +99,7 @@ version = "0.0.0"
 dependencies = [
  "archangel-core",
  "ed25519-dalek",
+ "regex",
  "serde",
  "sha2",
  "thiserror 1.0.69",
