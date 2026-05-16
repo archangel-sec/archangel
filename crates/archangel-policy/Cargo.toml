@@ -1,0 +1,23 @@
+[package]
+name = "archangel-policy"
+description = "Immutable denylist (compiled in) and WASM-based policy engine for archangel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+archangel-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# wasmtime added when the WASM engine is wired in.

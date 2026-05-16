@@ -1,0 +1,82 @@
+# /etc/archangel/archangel.toml
+#
+# Main configuration for the archangel daemon and executor.
+# This file is read at startup; reload via `archangelctl reload`.
+#
+# Defaults are deliberately conservative. The daemon will refuse to start with
+# settings that weaken security below the documented baseline.
+
+[daemon]
+# Path to the operator trust store (Ed25519 public keys allowed to sign
+# policies, .exec bundles, and approval requests).
+trust_store = "/etc/archangel/trust/operators.pubkeys"
+
+# Optional pinned TLS material for the LLM endpoint.
+tls_pinning = "/etc/archangel/trust/ca.pem"
+
+# Path to the audit log (append-only).
+audit_log = "/var/log/archangel/audit.log.jsonl"
+
+[sockets]
+control = "/run/archangel/ctl.sock"
+control_mode = 0o660
+control_group = "archangel"
+exec = "/run/archangel/exec.sock"
+
+[session]
+# Maximum concurrent sessions per operator.
+max_concurrent = 4
+# Per-session lifetime; sessions auto-expire and require re-auth.
+ttl_seconds = 3600
+# Per-task context isolation (#4). When true, each action starts a fresh
+# conversation; the LLM does not see prior tasks in the same session.
+per_task_isolation = true
+
+[llm]
+# Active backend. Override via `archangelctl session start --backend=<name>`.
+default_backend = "anthropic"
+
+[llm.prompts]
+# Spotlighting delimiters (#2) are randomized per session at runtime; this
+# only sets the *minimum* entropy in bits.
+spotlight_entropy_bits = 128
+# Canary tokens (#3): how many distinct canaries to embed in the system prompt.
+canary_count = 3
+
+[modes]
+# Default mode for new sessions when not explicitly set.
+default = "interactive"
+# Whether autonomous mode is allowed at all on this host. Off by default —
+# operators must opt in explicitly per profile.
+autonomous_allowed = false
+
+[rate_limits]
+# Layer #12. Per-session ceilings.
+actions_per_minute = 20
+mutating_actions_per_minute = 5
+critical_actions_per_hour = 2
+approval_requests_per_minute = 10
+
+[approval]
+# Layer #13. How operators receive approval requests in interactive mode.
+# Supported: "tui", "ntfy", "webhook"
+channels = ["tui"]
+# Layer #14. Operations marked risk = "critical" require this many signatures.
+critical_required_signatures = 2
+
+[snapshots]
+# Layer #16. Enable filesystem snapshots before mutating actions. Detected
+# at startup; if no supported backend, snapshot-required actions are denied.
+enabled = true
+# Preference order: "btrfs", "zfs", "lvm-thin".
+preferred_backend = "btrfs"
+
+[egress]
+# Layer #17. Kernel-level egress filtering for both the daemon and sandboxed
+# actions. Defaults are restrictive.
+default_policy = "deny"
+allow = [
+    # LLM endpoints — adjust to your active backend.
+    # "api.anthropic.com",
+    # "127.0.0.1:11434",   # Ollama
+]

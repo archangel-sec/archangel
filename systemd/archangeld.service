@@ -1,0 +1,84 @@
+[Unit]
+Description=Archangel daemon (LLM-facing, non-privileged)
+Documentation=https://github.com/archangel-sec/archangel
+After=network-online.target
+Wants=network-online.target
+Before=archangel-execd.service
+Requires=archangel-execd.service
+
+# Refuse to start in environments where systemd or kernel lacks the features
+# we rely on. Operators can opt out via drop-in if they accept the risk.
+AssertPathExists=/sys/fs/cgroup/cgroup.controllers
+AssertPathIsDirectory=/etc/archangel
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/archangeld --config /etc/archangel/archangel.toml
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+WatchdogSec=30s
+
+# --- Identity ---------------------------------------------------------------
+User=archangel
+Group=archangel
+SupplementaryGroups=archangel-audit
+DynamicUser=no
+
+# --- Filesystem isolation ---------------------------------------------------
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/archangel
+ReadWritePaths=/var/lib/archangel /var/log/archangel /run/archangel
+PrivateTmp=true
+PrivateDevices=true
+PrivateUsers=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+
+# --- Network ----------------------------------------------------------------
+# Daemon needs egress only to the configured LLM endpoint. Tighten via drop-in
+# with IPAddressDeny=any + IPAddressAllow=<llm-endpoints> at install time.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# --- Privileges -------------------------------------------------------------
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @swap @reboot @raw-io @cpu-emulation @debug @keyring @obsolete @clock @module
+
+# --- Resource limits --------------------------------------------------------
+LimitNOFILE=4096
+LimitNPROC=512
+TasksMax=256
+MemoryHigh=512M
+MemoryMax=1G
+
+# --- Logging ----------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=archangeld
+
+# --- Credentials -----------------------------------------------------------
+# LLM tokens are passed via systemd credentials, never read from world-readable
+# files. Configure via drop-in:
+#   LoadCredentialEncrypted=anthropic-token:/etc/archangel/credentials/anthropic-token.enc
+# The daemon reads them from $CREDENTIALS_DIRECTORY.
+
+[Install]
+WantedBy=multi-user.target

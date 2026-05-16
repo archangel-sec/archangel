@@ -1,0 +1,30 @@
+[package]
+name = "archangel-sandbox"
+description = "Per-action Linux sandboxing (namespaces, seccomp-bpf, capabilities, cgroups v2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+archangel-core = { workspace = true }
+nix = { workspace = true }
+caps = { workspace = true }
+seccompiler = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+# The sandbox crate is Linux-only. On other platforms, it builds as a no-op
+# stub so the rest of the workspace can still be checked from a developer
+# laptop running macOS or Windows.

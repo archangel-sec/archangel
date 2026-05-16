@@ -1,0 +1,141 @@
+# /etc/archangel/policies/denylist.toml
+#
+# !!! INFORMATIONAL ONLY !!!
+#
+# The authoritative denylist is COMPILED INTO the archangel binaries (layer #8
+# of the threat model). This file documents what the compiled rules cover so
+# that operators can see what is denied without reading the source.
+#
+# Editing this file has NO EFFECT on the runtime denylist. To request changes,
+# open a PR upstream — see CONTRIBUTING.md.
+
+# --- Self-protection ---------------------------------------------------------
+
+[[deny]]
+category = "self-protection"
+description = "No modification of archangel's own configuration, binaries, units, keys, or audit log."
+patterns_path = [
+    "/etc/archangel/**",
+    "/var/lib/archangel/**",
+    "/var/lib/archangel-exec/**",
+    "/var/log/archangel/**",
+    "/usr/bin/archangel*",
+    "/usr/lib/systemd/system/archangel*.service",
+    "/etc/systemd/system/archangel*.service",
+    "/etc/systemd/system/archangel*.service.d/**",
+]
+
+# --- SSH / remote access preservation ---------------------------------------
+
+[[deny]]
+category = "ssh"
+description = "No tampering with SSH access or its configuration."
+patterns_path = [
+    "/etc/ssh/**",
+    "/root/.ssh/authorized_keys",
+    "/home/*/.ssh/authorized_keys",
+]
+patterns_command = [
+    '^systemctl\s+(stop|disable|mask|kill)\s+sshd?(\.service)?$',
+    '^systemctl\s+(stop|disable|mask|kill)\s+ssh(\.socket)?$',
+    '^service\s+ssh(d)?\s+(stop|disable|kill)$',
+]
+
+# --- Firewall preservation ---------------------------------------------------
+
+[[deny]]
+category = "firewall"
+description = "No flushing or disabling of host firewall."
+patterns_command = [
+    '^ufw\s+disable$',
+    '^iptables\s+-F$',
+    '^iptables\s+--flush$',
+    '^nft\s+flush\s+ruleset$',
+    '^firewall-cmd\s+--complete-reload$',
+    '^systemctl\s+(stop|disable|mask)\s+(firewalld|nftables|ufw)(\.service)?$',
+]
+
+# --- Filesystem destruction --------------------------------------------------
+
+[[deny]]
+category = "destruction"
+description = "No formatting, wiping, or raw writes to block devices."
+patterns_command = [
+    '^mkfs(\.\w+)?\b',
+    '^wipefs\b',
+    '^shred\s+.*\s/dev/(sd|nvme|vd|md|dm-|loop)',
+    '^dd\b.*\bof=/dev/(sd|nvme|vd|md|dm-|loop)',
+    '^cryptsetup\s+luksFormat\b',
+    '^parted\b.*\b(mklabel|mkpart|rm)\b',
+    '^fdisk\b',
+    '^sfdisk\b',
+    '^blkdiscard\b',
+    '^:\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;\s*:',   # fork bomb
+]
+
+# --- Mass deletion -----------------------------------------------------------
+
+[[deny]]
+category = "mass-deletion"
+description = "No catastrophic recursive removal."
+patterns_command = [
+    '^rm\s+(-[rRfF]+\s+)?(/|/bin|/boot|/dev|/etc|/lib(64)?|/proc|/root|/sbin|/sys|/usr|/var)(\s|/|$)',
+    '^find\s+(/|/bin|/boot|/dev|/etc|/lib(64)?|/proc|/root|/sbin|/sys|/usr|/var).*(-delete|-exec\s+rm)',
+]
+
+# --- Identity / auth --------------------------------------------------------
+
+[[deny]]
+category = "identity"
+description = "No silent modification of user identity, passwords, or sudo policy."
+patterns_path = [
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/etc/sudoers",
+    "/etc/sudoers.d/**",
+    "/etc/pam.d/**",
+    "/etc/security/**",
+]
+patterns_command = [
+    '^passwd\s+root$',
+    '^passwd\s+-d\s+',
+    '^usermod\s+.*(-p|--password|--groups\s+sudo|--groups\s+wheel)',
+    '^useradd\s+.*(--groups\s+sudo|--groups\s+wheel|-G\s+sudo|-G\s+wheel)',
+    '^visudo\b',
+]
+
+# --- Kernel / boot ----------------------------------------------------------
+
+[[deny]]
+category = "kernel"
+description = "No tampering with boot, kernel, or modules."
+patterns_path = [
+    "/boot/**",
+    "/etc/default/grub",
+    "/etc/grub.d/**",
+]
+patterns_command = [
+    '^kexec\b',
+    '^insmod\b',
+    '^modprobe\b',
+    '^rmmod\b',
+    '^grub2?-install\b',
+    '^grub2?-mkconfig\b',
+    '^update-grub\b',
+    '^update-initramfs\b',
+    '^dracut\b',
+]
+
+# --- Network exfiltration / reverse shells ---------------------------------
+
+[[deny]]
+category = "exfiltration"
+description = "Common reverse-shell and arbitrary-fetch-and-execute patterns."
+patterns_command = [
+    '\|\s*(bash|sh|zsh|python|perl|ruby|node)\b',     # pipe-to-shell
+    '\bcurl\b.*\|\s*(bash|sh)\b',
+    '\bwget\b.*\|\s*(bash|sh)\b',
+    '\bnc(at)?\b.*-e\b',
+    '\bsocat\b.*\bEXEC\b',
+    '\bbash\s+-i\b.*>&\s*/dev/tcp/',
+]

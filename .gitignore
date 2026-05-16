@@ -1,0 +1,61 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.vs/
+
+# Local config / secrets — must never be committed
+*.local.toml
+*.local.json
+*.local.yml
+*.local.yaml
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.pfx
+*.p12
+*.gpg
+*.asc
+!docs/security-keys.md
+
+# Operator key material — defense in depth even if developer mounts /etc/archangel locally
+keys/
+trust/
+**/operators.pubkeys
+**/operators.privkeys
+
+# Build / packaging artifacts
+/dist/
+/build/
+*.deb
+*.rpm
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.sig
+*.sbom.json
+
+# Coverage / profiling
+/coverage/
+*.profraw
+*.profdata
+tarpaulin-report.html
+
+# Fuzzing
+/fuzz/corpus/
+/fuzz/artifacts/
+
+# Misc
+*.log
+*.tmp

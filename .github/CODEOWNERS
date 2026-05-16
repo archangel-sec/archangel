@@ -1,0 +1,32 @@
+# CODEOWNERS — security-critical paths require extra reviewers.
+# Until maintainers exist by name, every line points to the project team
+# placeholder. Replace with real handles when the org is created.
+
+# Default ownership.
+*                                       @archangel-sec/maintainers
+
+# Crates in the Trusted Computing Base (T2): require security team review.
+/crates/archangel-execd/**              @archangel-sec/security
+/crates/archangel-sandbox/**            @archangel-sec/security
+/crates/archangel-policy/**             @archangel-sec/security
+/crates/archangel-audit/**              @archangel-sec/security
+/crates/archangel-exec-format/**        @archangel-sec/security
+
+# Compiled denylist: extra scrutiny.
+/crates/archangel-policy/src/denylist.rs @archangel-sec/security
+
+# Threat model and security policy: maintainer + security signoff.
+/docs/THREAT_MODEL.md                   @archangel-sec/maintainers @archangel-sec/security
+/SECURITY.md                            @archangel-sec/maintainers @archangel-sec/security
+
+# Systemd units: distro packaging + security review.
+/systemd/**                             @archangel-sec/packaging @archangel-sec/security
+
+# Packaging.
+/packaging/**                           @archangel-sec/packaging
+
+# CI workflows: changes can weaken safeguards if done carelessly.
+/.github/workflows/**                   @archangel-sec/maintainers @archangel-sec/security
+
+# Deny policy.
+/deny.toml                              @archangel-sec/security

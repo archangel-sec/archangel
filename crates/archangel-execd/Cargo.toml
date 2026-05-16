@@ -1,0 +1,36 @@
+[package]
+name = "archangel-execd"
+description = "Archangel executor: the only component that mutates the system. Minimal, signed-request only, sandboxed."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "archangel-execd"
+path = "src/main.rs"
+
+[dependencies]
+archangel-core = { workspace = true }
+archangel-policy = { workspace = true }
+archangel-audit = { workspace = true }
+archangel-sandbox = { workspace = true }
+archangel-exec-format = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+ed25519-dalek = { workspace = true }
+zeroize = { workspace = true }
+nix = { workspace = true }
