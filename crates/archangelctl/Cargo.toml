@@ -21,8 +21,10 @@ path = "src/main.rs"
 
 [dependencies]
 archangel-core = { workspace = true }
+archangel-audit = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
+rand = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }

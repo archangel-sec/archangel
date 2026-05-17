@@ -183,9 +183,11 @@ name = "archangelctl"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "archangel-audit",
  "archangel-core",
  "clap",
  "ed25519-dalek",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
