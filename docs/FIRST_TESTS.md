@@ -153,28 +153,54 @@ Expect `AUDIT CHAIN VERIFIED` and the full decision chain.
 
 ---
 
-## 6. Installing the `.deb` instead (optional)
+## 6. Installing the `.deb` — the 3-step path
 
-There is no pre-built release; build the packages yourself:
+No pre-built release yet; build the packages once, then it is 3 steps.
 
 ```sh
 cargo install cargo-deb
-cargo build --release -p archangeld -p archangel-execd -p archangelctl
-cargo deb -p archangeld     --no-build
-cargo deb -p archangel-execd --no-build
-cargo deb -p archangelctl    --no-build
-sudo apt install ./target/debian/archangeld_*.deb        # creates users/dirs
-sudo apt install ./target/debian/archangel-execd_*.deb
-sudo apt install ./target/debian/archangelctl_*.deb
+cargo build --release -p archangeld -p archangel-execd -p archangelctl -p archangel
+for p in archangeld archangel-execd archangelctl archangel; do
+  cargo deb -p "$p" --no-build
+done
 ```
 
-Then: `sudo cp /etc/archangel/archangel.toml.example
-/etc/archangel/archangel.toml`, edit it (set `operator_uid` to your uid,
-`daemon_uid` to `id -u archangel`, choose the backend), run
-`archangelctl init`, `bundle-sign` the sample, write the allowlist, and
-`systemctl start archangel-execd archangeld` (the units are config-driven
-and hardened). For first exploration the local tree above is simpler and
-needs no root.
+**Step 1 — install** (the `archangel` meta-package pulls the other three;
+installing all the local .debs together lets apt resolve order):
+
+```sh
+sudo apt install ./target/debian/archangel*_0.0.0-1_amd64.deb
+```
+
+**Step 2 — bootstrap** (one command: keys, trust, sample bundle,
+allowlist, validated config, preflight; idempotent, never clobbers):
+
+```sh
+# Ollama (offline):
+sudo archangel setup --backend ollama
+# …or Anthropic/Opus 4.7 (prompts for the token with echo OFF; or pass
+# --token-file PATH). The token is written 0600 to /etc/archangel/llm.env,
+# never to argv or the config:
+sudo archangel setup --backend anthropic
+```
+
+`setup` auto-detects the operator UID (via `SUDO_UID`) and the
+`archangel` daemon UID. `archangel <cmd>` is just a friendly alias for
+`archangelctl <cmd>` (`archangel doctor`, `archangel session`, …).
+
+**Step 3 — run** (systemd; units are config-driven and hardened):
+
+```sh
+sudo systemctl enable --now archangel-execd archangeld
+archangel session --secret /etc/archangel/trust/operator.key \
+                   --socket /run/archangel/ctl.sock
+```
+
+> Anthropic under systemd: the hardened unit has `IPAddressDeny=any`
+> (no egress). Allow the API with a drop-in (`sudo systemctl edit
+> archangeld` → `[Service]` → `IPAddressAllow=<anthropic ip/cidr>`), or
+> use the offline Ollama backend. The manual run (sections 1–5) has no IP
+> filter and needs no drop-in.
 
 ---
 

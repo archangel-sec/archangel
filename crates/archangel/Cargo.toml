@@ -1,0 +1,41 @@
+[package]
+name = "archangel"
+description = "Archangel meta-package + friendly launcher (forwards to archangelctl)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "archangel"
+path = "src/main.rs"
+
+# Meta-package: `apt install archangel` pulls the whole system. The thin
+# `archangel` binary just forwards to `archangelctl` so `archangel setup`,
+# `archangel session`, `archangel doctor`, … all work.
+[package.metadata.deb]
+maintainer = "Archangel contributors <security@archangel-sec.org>"
+section = "admin"
+priority = "optional"
+depends = "archangeld (= 0.0.0-1), archangel-execd (= 0.0.0-1), archangelctl (= 0.0.0-1)"
+extended-description = """\
+Meta-package that installs the full archangel system (daemon, executor,
+operator CLI) and a friendly `archangel` launcher. Pre-alpha; not for
+production."""
+assets = [
+    ["target/release/archangel", "usr/bin/", "755"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/archangel", dest = "/usr/bin/archangel", mode = "755" },
+]

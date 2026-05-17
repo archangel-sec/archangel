@@ -14,6 +14,10 @@ AssertPathIsDirectory=/etc/archangel
 
 [Service]
 Type=notify
+# The LLM token is never in the config file. `archangelctl setup` writes
+# it (0600) to llm.env; the leading `-` makes it optional (absent for the
+# offline Ollama backend, which needs no token).
+EnvironmentFile=-/etc/archangel/llm.env
 ExecStart=/usr/bin/archangeld --config /etc/archangel/archangel.toml
 Restart=on-failure
 RestartSec=2s

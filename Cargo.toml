@@ -13,6 +13,7 @@ members = [
     "crates/archangeld",
     "crates/archangel-execd",
     "crates/archangelctl",
+    "crates/archangel",
 ]
 
 [workspace.package]
