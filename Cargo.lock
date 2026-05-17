@@ -112,19 +112,17 @@ name = "archangel-execd"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "archangel-audit",
  "archangel-core",
  "archangel-exec-format",
+ "archangel-ipc",
  "archangel-policy",
- "archangel-sandbox",
  "clap",
  "ed25519-dalek",
- "nix",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "zeroize",
 ]
 
 [[package]]

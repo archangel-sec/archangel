@@ -19,11 +19,16 @@ workspace = true
 name = "archangel-execd"
 path = "src/main.rs"
 
+# Trust tier T2 — the only component that mutates the system. The
+# dependency surface is kept deliberately minimal: every crate here is in
+# the executor's TCB and a target for external audit. archangel-sandbox
+# (v0.2 isolation) and archangel-audit (archangeld is what writes the log,
+# architecture step 13) are intentionally NOT dependencies yet — they are
+# added when the milestone that needs them lands, not before.
 [dependencies]
 archangel-core = { workspace = true }
+archangel-ipc = { workspace = true }
 archangel-policy = { workspace = true }
-archangel-audit = { workspace = true }
-archangel-sandbox = { workspace = true }
 archangel-exec-format = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
@@ -32,5 +37,6 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 ed25519-dalek = { workspace = true }
-zeroize = { workspace = true }
-nix = { workspace = true }
+
+[dev-dependencies]
+sha2 = { workspace = true }
