@@ -154,11 +154,18 @@ fn build_backend(cfg: &Config) -> anyhow::Result<AnyBackend> {
                 },
             )?))
         }
-        "ollama" => Ok(AnyBackend::Ollama(OllamaBackend::new(OllamaConfig {
-            base_url: None,
-            timeout: None,
-            max_response_bytes: None,
-        })?)),
+        "ollama" => {
+            // ARCHANGEL_OLLAMA_URL lets operators point at a non-default
+            // Ollama host (and makes cross-process e2e testing possible).
+            // It must be loopback/explicit; the hardened client still
+            // forbids redirects and env proxies.
+            let base_url = std::env::var("ARCHANGEL_OLLAMA_URL").ok();
+            Ok(AnyBackend::Ollama(OllamaBackend::new(OllamaConfig {
+                base_url,
+                timeout: None,
+                max_response_bytes: None,
+            })?))
+        }
         other => Err(anyhow!("unsupported llm.default_backend {other:?}")),
     }
 }

@@ -39,4 +39,11 @@ anyhow = { workspace = true }
 ed25519-dalek = { workspace = true }
 
 [dev-dependencies]
+# Cross-process e2e: drive the REAL execd binary over a REAL Unix socket.
 sha2 = { workspace = true }
+archangel-core = { workspace = true }
+archangel-ipc = { workspace = true }
+archangel-policy = { workspace = true }
+archangel-exec-format = { workspace = true }
+ed25519-dalek = { workspace = true }
+tokio = { workspace = true }
