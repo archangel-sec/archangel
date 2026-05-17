@@ -27,9 +27,12 @@ pub mod session;
 pub mod orchestrator;
 /// Production executor transport (boundary-B client over a Unix socket).
 pub mod transport;
+/// Control-plane socket server (boundary-A enforcement).
+pub mod server;
 
 pub use config::{Config, ConfigError};
 pub use orchestrator::{ExecTransport, Orchestrator, OrchestratorError, TaskOutcome};
 pub use response::{parse_model_response, ModelAction, ResponseError};
+pub use server::{handle_ctl_frame, CtlReplayGuard, CtlService};
 pub use session::Session;
 pub use transport::SocketExecTransport;

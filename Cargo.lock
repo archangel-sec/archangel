@@ -216,6 +216,7 @@ dependencies = [
  "anyhow",
  "archangel-audit",
  "archangel-core",
+ "archangel-ctl",
  "archangel-exec-format",
  "archangel-execd",
  "archangel-ipc",
