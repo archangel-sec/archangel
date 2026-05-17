@@ -15,6 +15,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// Daemon configuration (fail-closed validation).
+pub mod config;
 /// Prompt construction and prompt-injection defenses (#1–#4).
 pub mod prompt;
 /// Strict structured model-output parsing (#5).
@@ -23,7 +25,11 @@ pub mod response;
 pub mod session;
 /// The read-only orchestration pipeline.
 pub mod orchestrator;
+/// Production executor transport (boundary-B client over a Unix socket).
+pub mod transport;
 
+pub use config::{Config, ConfigError};
 pub use orchestrator::{ExecTransport, Orchestrator, OrchestratorError, TaskOutcome};
 pub use response::{parse_model_response, ModelAction, ResponseError};
 pub use session::Session;
+pub use transport::SocketExecTransport;
