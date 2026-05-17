@@ -78,10 +78,16 @@ spotlight_entropy_bits = 128
 canary_count = 3
 
 [modes]
-# Default mode for new sessions when not explicitly set.
-default = "interactive"
+# Default mode for new sessions.
+#
+# v0.1 is the READ-ONLY milestone: the executor structurally runs only
+# `read_only = true` bundles, and the interactive approval queue (#13)
+# and autonomous mode are later milestones. So the working default for
+# v0.1 is "read_only"; your allowlist's `mode` must match the session
+# mode, so its profiles should also be `mode = "read_only"`.
+default = "read_only"
 # Whether autonomous mode is allowed at all on this host. Off by default —
-# operators must opt in explicitly per profile.
+# operators must opt in explicitly per profile (not used in v0.1).
 autonomous_allowed = false
 
 [rate_limits]
