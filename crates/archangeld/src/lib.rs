@@ -15,8 +15,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Daemon configuration (fail-closed validation).
-pub mod config;
 /// Prompt construction and prompt-injection defenses (#1–#4).
 pub mod prompt;
 /// Strict structured model-output parsing (#5).
@@ -30,7 +28,7 @@ pub mod transport;
 /// Control-plane socket server (boundary-A enforcement).
 pub mod server;
 
-pub use config::{Config, ConfigError};
+pub use archangel_config::{Config, ConfigError};
 pub use orchestrator::{ExecTransport, Orchestrator, OrchestratorError, TaskOutcome};
 pub use response::{parse_model_response, ModelAction, ResponseError};
 pub use server::{handle_ctl_frame, CtlReplayGuard, CtlService};

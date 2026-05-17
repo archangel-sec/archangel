@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/archangel-core",
+    "crates/archangel-config",
     "crates/archangel-ipc",
     "crates/archangel-ctl",
     "crates/archangel-policy",
@@ -32,6 +33,7 @@ categories = ["command-line-utilities", "os::linux-apis"]
 [workspace.dependencies]
 # Local crates
 archangel-core = { path = "crates/archangel-core", version = "0.0.0" }
+archangel-config = { path = "crates/archangel-config", version = "0.0.0" }
 archangel-ipc = { path = "crates/archangel-ipc", version = "0.0.0" }
 archangel-ctl = { path = "crates/archangel-ctl", version = "0.0.0" }
 archangel-policy = { path = "crates/archangel-policy", version = "0.0.0" }

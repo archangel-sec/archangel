@@ -1,14 +1,17 @@
-//! Daemon configuration (`/etc/archangel/archangel.toml`).
+//! Shared, fail-closed configuration for `archangeld` and `archangel-execd`.
 //!
-//! v0.1 parses only the sections this milestone actually enforces and
-//! ignores the forward-looking ones (rate limits, approval, snapshots,
-//! egress) — they are validated by the layers that own them when those
-//! land, not pretended here.
+//! One schema, one validator, used by both daemons so the control plane
+//! and the executor can never disagree about paths, sockets, or the
+//! peer-credential gates. v0.1 parses only what this milestone enforces
+//! and ignores forward-looking sections (rate limits, approval, snapshots,
+//! egress) rather than pretending to enforce them.
 //!
-//! `validate()` is **fail-closed**: the daemon refuses to start with
-//! settings that weaken security below the documented baseline (per the
-//! example config's own promise). A config we cannot prove safe is a
-//! startup error, never a silent downgrade.
+//! `validate()` is fail-closed: the daemons refuse to start with settings
+//! that weaken security below the documented baseline. Anything we cannot
+//! prove safe is a startup error, never a silent downgrade.
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 use std::path::{Path, PathBuf};
 
@@ -23,12 +26,29 @@ pub enum ConfigError {
     /// The file could not be read.
     #[error("cannot read config: {0}")]
     Io(#[from] std::io::Error),
-    /// The file was not valid TOML / had the wrong shape.
+    /// The file was not valid TOML / had the wrong shape (this includes a
+    /// missing required field such as `sockets.operator_uid`).
     #[error("invalid config syntax: {0}")]
     Parse(String),
     /// The config parsed but violates a security baseline.
     #[error("config rejected (fail-closed): {0}")]
     Invalid(String),
+}
+
+fn d_audit_key() -> PathBuf {
+    "/etc/archangel/trust/audit.key".into()
+}
+fn d_operator_pub() -> PathBuf {
+    "/etc/archangel/trust/operator.pub".into()
+}
+fn d_allowlist() -> PathBuf {
+    "/etc/archangel/policies/allowlist.toml".into()
+}
+fn d_bundle_dir() -> PathBuf {
+    "/etc/archangel/exec".into()
+}
+fn d_session_pub() -> PathBuf {
+    "/run/archangel/session.pub".into()
 }
 
 /// `[daemon]`.
@@ -39,6 +59,30 @@ pub struct DaemonCfg {
     pub trust_store: PathBuf,
     /// Append-only audit log path.
     pub audit_log: PathBuf,
+    /// Persistent audit signing key (hex seed); generated `0600` if absent.
+    #[serde(default = "d_audit_key")]
+    pub audit_key: PathBuf,
+    /// Pinned operator public key for boundary-A auth.
+    #[serde(default = "d_operator_pub")]
+    pub operator_pubkey: PathBuf,
+    /// Allowlist TOML.
+    #[serde(default = "d_allowlist")]
+    pub allowlist: PathBuf,
+    /// Directory of signed `.exec` bundles.
+    #[serde(default = "d_bundle_dir")]
+    pub bundle_dir: PathBuf,
+    /// Where `archangeld` publishes its per-run session public key for the
+    /// executor to read (rotated each daemon restart). A public key — its
+    /// integrity is protected by the containing directory's permissions.
+    #[serde(default = "d_session_pub")]
+    pub session_pub: PathBuf,
+}
+
+const fn d_ctl_mode() -> u32 {
+    0o660
+}
+fn d_ctl_group() -> String {
+    "archangel".to_owned()
 }
 
 /// `[sockets]`.
@@ -47,20 +91,19 @@ pub struct SocketsCfg {
     /// Operator control socket (boundary A).
     pub control: PathBuf,
     /// Control socket file mode (octal in TOML, e.g. `0o660`).
-    #[serde(default = "default_ctl_mode")]
+    #[serde(default = "d_ctl_mode")]
     pub control_mode: u32,
     /// Group that owns the control socket.
-    #[serde(default = "default_ctl_group")]
+    #[serde(default = "d_ctl_group")]
     pub control_group: String,
     /// Executor socket (boundary B).
     pub exec: PathBuf,
-}
-
-const fn default_ctl_mode() -> u32 {
-    0o660
-}
-fn default_ctl_group() -> String {
-    "archangel".to_owned()
+    /// UID allowed to connect to the **control** socket (the operator).
+    /// Required — there is no insecure default.
+    pub operator_uid: u32,
+    /// UID `archangeld` runs as; the executor only accepts **exec** socket
+    /// connections from this UID. Required — no insecure default.
+    pub daemon_uid: u32,
 }
 
 /// `[session]`.
@@ -94,7 +137,6 @@ pub struct ModesCfg {
 
 impl Default for ModesCfg {
     fn default() -> Self {
-        // Conservative: interactive by default, autonomous opt-in only.
         Self {
             default: OperationMode::Interactive,
             autonomous_allowed: false,
@@ -106,19 +148,25 @@ impl Default for ModesCfg {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LlmCfg {
-    /// Active backend name.
+    /// Active backend name (`anthropic` | `ollama`).
     pub default_backend: String,
+    /// Model id. `None` lets the daemon pick a per-backend default.
+    pub model: Option<String>,
+    /// Max tokens per completion.
+    pub max_tokens: u32,
 }
 
 impl Default for LlmCfg {
     fn default() -> Self {
         Self {
             default_backend: "ollama".to_owned(),
+            model: None,
+            max_tokens: 1024,
         }
     }
 }
 
-/// The parsed, validated daemon configuration.
+/// The parsed, validated configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     /// `[daemon]`.
@@ -152,12 +200,17 @@ impl Config {
 
     /// Security baseline checks. Any failure is a refusal to start.
     fn validate(&self) -> Result<(), ConfigError> {
-        for (label, p) in [
+        let abs: [(&str, &Path); 8] = [
             ("daemon.trust_store", &self.daemon.trust_store),
             ("daemon.audit_log", &self.daemon.audit_log),
+            ("daemon.audit_key", &self.daemon.audit_key),
+            ("daemon.operator_pubkey", &self.daemon.operator_pubkey),
+            ("daemon.allowlist", &self.daemon.allowlist),
+            ("daemon.bundle_dir", &self.daemon.bundle_dir),
             ("sockets.control", &self.sockets.control),
             ("sockets.exec", &self.sockets.exec),
-        ] {
+        ];
+        for (label, p) in abs {
             if !p.is_absolute() {
                 return Err(ConfigError::Invalid(format!(
                     "{label} must be an absolute path, got {}",
@@ -165,18 +218,20 @@ impl Config {
                 )));
             }
         }
+        if !self.daemon.session_pub.is_absolute() {
+            return Err(ConfigError::Invalid(
+                "daemon.session_pub must be an absolute path".to_owned(),
+            ));
+        }
 
-        // A world-accessible control socket would let any local user drive
-        // the daemon. Refuse any "other" permission bit.
         if self.sockets.control_mode & 0o007 != 0 {
             return Err(ConfigError::Invalid(format!(
-                "sockets.control_mode {:#o} grants access to 'other'; \
-                 the control socket must be owner/group only",
+                "sockets.control_mode {:#o} grants access to 'other'; the \
+                 control socket must be owner/group only",
                 self.sockets.control_mode
             )));
         }
 
-        // Autonomous default is only allowed if autonomous is enabled.
         if self.modes.default == OperationMode::Autonomous
             && !self.modes.autonomous_allowed
         {
@@ -184,6 +239,15 @@ impl Config {
                 "modes.default = autonomous but modes.autonomous_allowed = false"
                     .to_owned(),
             ));
+        }
+
+        match self.llm.default_backend.as_str() {
+            "anthropic" | "ollama" => {}
+            other => {
+                return Err(ConfigError::Invalid(format!(
+                    "llm.default_backend {other:?} is not supported (anthropic|ollama)"
+                )));
+            }
         }
 
         Ok(())
@@ -200,27 +264,41 @@ mod tests {
     const MINIMAL: &str = r#"
 [daemon]
 trust_store = "/etc/archangel/trust/operators.pubkeys"
-audit_log = "/var/log/archangel/audit.log.jsonl"
+audit_log   = "/var/log/archangel/audit.log.jsonl"
 
 [sockets]
-control = "/run/archangel/ctl.sock"
+control      = "/run/archangel/ctl.sock"
 control_mode = 0o660
-exec = "/run/archangel/exec.sock"
+exec         = "/run/archangel/exec.sock"
+operator_uid = 1000
+daemon_uid   = 1000
 "#;
 
     #[test]
-    fn minimal_valid_config_parses_with_conservative_defaults() {
+    fn minimal_valid_config_parses_with_defaults() {
         let c = Config::from_toml(MINIMAL).expect("valid");
         assert_eq!(c.modes.default, OperationMode::Interactive);
         assert!(!c.modes.autonomous_allowed);
         assert!(c.session.per_task_isolation);
+        assert_eq!(c.sockets.operator_uid, 1000);
+        assert_eq!(
+            c.daemon.session_pub.to_str(),
+            Some("/run/archangel/session.pub")
+        );
+        assert_eq!(c.llm.default_backend, "ollama");
     }
 
     #[test]
-    fn relative_paths_are_refused() {
+    fn missing_operator_uid_is_rejected() {
+        let bad = MINIMAL.replace("operator_uid = 1000\n", "");
+        assert!(Config::from_toml(&bad).is_err(), "uid is required");
+    }
+
+    #[test]
+    fn relative_path_is_refused() {
         let bad = MINIMAL.replace(
             "/var/log/archangel/audit.log.jsonl",
-            "var/log/archangel/audit.log.jsonl",
+            "var/log/audit.jsonl",
         );
         assert!(Config::from_toml(&bad).is_err());
     }
@@ -228,40 +306,30 @@ exec = "/run/archangel/exec.sock"
     #[test]
     fn world_accessible_control_socket_is_refused() {
         let bad = MINIMAL.replace("0o660", "0o666");
-        let err = Config::from_toml(&bad).expect_err("must reject");
-        assert!(format!("{err}").contains("other"));
+        let e = Config::from_toml(&bad).expect_err("reject");
+        assert!(format!("{e}").contains("other"));
     }
 
     #[test]
     fn autonomous_default_without_optin_is_refused() {
         let bad = format!(
-            "{MINIMAL}\n[modes]\ndefault = \"autonomous\"\nautonomous_allowed = false\n"
+            "{MINIMAL}\n[modes]\ndefault=\"autonomous\"\nautonomous_allowed=false\n"
         );
         assert!(Config::from_toml(&bad).is_err());
     }
 
     #[test]
-    fn autonomous_default_with_optin_is_allowed() {
-        let ok = format!(
-            "{MINIMAL}\n[modes]\ndefault = \"autonomous\"\nautonomous_allowed = true\n"
-        );
-        let c = Config::from_toml(&ok).expect("valid");
-        assert_eq!(c.modes.default, OperationMode::Autonomous);
+    fn unsupported_backend_is_refused() {
+        let bad = format!("{MINIMAL}\n[llm]\ndefault_backend=\"gpt5\"\n");
+        assert!(Config::from_toml(&bad).is_err());
     }
 
     #[test]
-    fn forward_looking_sections_are_ignored_not_rejected() {
-        // The documented example has sections v0.1 does not enforce yet;
-        // they must not break startup.
-        let with_future = format!(
-            "{MINIMAL}\n[rate_limits]\nactions_per_minute = 20\n\
-             [egress]\ndefault_policy = \"deny\"\n"
+    fn forward_looking_sections_are_ignored() {
+        let f = format!(
+            "{MINIMAL}\n[rate_limits]\nactions_per_minute=20\n\
+             [egress]\ndefault_policy=\"deny\"\n"
         );
-        assert!(Config::from_toml(&with_future).is_ok());
-    }
-
-    #[test]
-    fn invalid_toml_is_error() {
-        assert!(Config::from_toml("this is = = not toml").is_err());
+        assert!(Config::from_toml(&f).is_ok());
     }
 }

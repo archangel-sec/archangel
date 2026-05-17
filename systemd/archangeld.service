@@ -1,10 +1,11 @@
 [Unit]
 Description=Archangel daemon (LLM-facing, non-privileged)
 Documentation=https://github.com/archangel-sec/archangel
-After=network-online.target
-Wants=network-online.target
-Before=archangel-execd.service
-Requires=archangel-execd.service
+# The executor binds the exec socket and reads the session key archangeld
+# publishes; start it first, but only Wants (not Requires) so a failure is
+# reported clearly rather than blocking the daemon from starting.
+After=network-online.target archangel-execd.service
+Wants=network-online.target archangel-execd.service
 
 # Refuse to start in environments where systemd or kernel lacks the features
 # we rely on. Operators can opt out via drop-in if they accept the risk.

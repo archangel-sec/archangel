@@ -44,6 +44,14 @@ install -d -m 0750 -o root           -g archangel       /etc/archangel/trust
 install -d -m 0750 -o root           -g archangel       /etc/archangel/policies
 install -d -m 0750 -o root           -g archangel       /etc/archangel/exec
 
+# Shared runtime dir (sockets + published session key). tmpfiles.d
+# recreates it on every boot; create it now too so a post-install run
+# without a reboot works.
+install -d -m 2770 -o archangel -g archangel-audit /run/archangel 2>/dev/null || true
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/archangel.conf >/dev/null 2>&1 || true
+fi
+
 echo "archangel: system users and directories ready."
 echo "Next: 'archangelctl init' to create the operator key, then review"
 echo "/etc/archangel/archangel.toml and run 'archangelctl doctor'."

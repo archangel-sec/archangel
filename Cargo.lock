@@ -82,6 +82,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "archangel-config"
+version = "0.0.0"
+dependencies = [
+ "archangel-core",
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
 name = "archangel-core"
 version = "0.0.0"
 dependencies = [
@@ -124,6 +134,7 @@ name = "archangel-execd"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "archangel-config",
  "archangel-core",
  "archangel-exec-format",
  "archangel-ipc",
@@ -216,6 +227,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "archangel-audit",
+ "archangel-config",
  "archangel-core",
  "archangel-ctl",
  "archangel-exec-format",

@@ -110,6 +110,17 @@ impl<R: ActionRunner> Executor<R> {
         }
     }
 
+    /// Replace the trusted per-session verifying key.
+    ///
+    /// `archangeld` rotates its session key on every restart and publishes
+    /// the public half to a file; the socket server calls this before each
+    /// connection so a daemon restart is picked up without restarting the
+    /// executor. The replay guard is keyed by `SessionId`, so a new
+    /// session naturally gets fresh replay state.
+    pub const fn set_session_key(&mut self, key: ed25519_dalek::VerifyingKey) {
+        self.session_key = key;
+    }
+
     /// Run one request end to end. Never panics; never returns "allow" on
     /// any internal failure.
     pub fn handle(&mut self, frame_body: &[u8]) -> ExecResponse {

@@ -50,6 +50,7 @@ assets = [
 # added when the milestone that needs them lands, not before.
 [dependencies]
 archangel-core = { workspace = true }
+archangel-config = { workspace = true }
 archangel-ipc = { workspace = true }
 archangel-policy = { workspace = true }
 archangel-exec-format = { workspace = true }

@@ -40,7 +40,7 @@ use archangel_llm::{
 };
 use archangel_policy::{Allowlist, PolicyEngine};
 use archangeld::{
-    config::Config, prompt::ToolSpec, server::handle_ctl_frame, server::CtlReplayGuard,
+    prompt::ToolSpec, server::handle_ctl_frame, server::CtlReplayGuard, Config,
     Orchestrator, Session, SocketExecTransport,
 };
 use archangel_ctl::SignedCtlEnvelope;
@@ -48,31 +48,39 @@ use archangel_ctl::SignedCtlEnvelope;
 #[derive(Parser, Debug)]
 #[command(name = "archangeld", version, about = "Archangel daemon (T3)")]
 struct Args {
-    /// Main configuration file.
+    /// Main configuration file. Everything else comes from it, so the
+    /// systemd unit is simply `archangeld --config /etc/archangel/...`.
     #[arg(long, default_value = "/etc/archangel/archangel.toml")]
     config: PathBuf,
-    /// Allowlist TOML.
-    #[arg(long, default_value = "/etc/archangel/policies/allowlist.toml")]
-    allowlist: PathBuf,
-    /// Directory of signed `.exec` bundles.
-    #[arg(long, default_value = "/etc/archangel/exec")]
-    bundle_dir: PathBuf,
-    /// Pinned operator public key (hex) for boundary-A auth.
-    #[arg(long, default_value = "/etc/archangel/trust/operator.pub")]
-    operator_pubkey: PathBuf,
-    /// Persistent audit signing key (hex seed); generated 0600 if absent.
-    #[arg(long, default_value = "/etc/archangel/trust/audit.key")]
-    audit_key: PathBuf,
-    /// Only accept control connections from this peer UID (no insecure
-    /// default — the operator must state it).
-    #[arg(long)]
-    operator_uid: u32,
-    /// Model id (defaults per backend if unset).
-    #[arg(long)]
-    model: Option<String>,
-    /// Max tokens for completions.
-    #[arg(long, default_value_t = 1024)]
-    max_tokens: u32,
+}
+
+/// Atomically publish the per-run session public key for the executor to
+/// read (write to a temp file `0640`, then rename over the target). It is
+/// a *public* key; integrity comes from the directory's permissions, not
+/// secrecy. Written before the control socket is bound so the executor
+/// never races a missing/!stale file for this run.
+fn publish_session_pub(path: &std::path::Path, hex: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o640)
+            .open(&tmp)
+            .context("create session.pub tmp")?;
+        f.write_all(hex.as_bytes())
+            .and_then(|()| f.write_all(b"\n"))
+            .context("write session.pub")?;
+        f.sync_all().ok();
+    }
+    std::fs::rename(&tmp, path).context("rename session.pub into place")?;
+    Ok(())
 }
 
 /// Runtime backend selector so the daemon can pick one from config without
@@ -258,18 +266,19 @@ async fn main() -> anyhow::Result<()> {
     if trust.is_empty() {
         warn!("operator trust store is empty: every .exec bundle will be rejected");
     }
-    let allowlist = Allowlist::load(&args.allowlist).context("loading allowlist")?;
+    let allowlist =
+        Allowlist::load(&cfg.daemon.allowlist).context("loading allowlist")?;
     let policy = PolicyEngine::new(allowlist);
 
-    let op_pub_hex =
-        std::fs::read_to_string(&args.operator_pubkey).context("read operator pubkey")?;
+    let op_pub_hex = std::fs::read_to_string(&cfg.daemon.operator_pubkey)
+        .context("read operator pubkey")?;
     let op_bytes: [u8; 32] = decode_hex(&op_pub_hex)?
         .try_into()
         .map_err(|_| anyhow!("operator pubkey must be 32 bytes"))?;
     let operator_pub = ed25519_dalek::VerifyingKey::from_bytes(&op_bytes)
         .context("invalid operator public key")?;
 
-    let audit_kp = load_or_create_audit_key(&args.audit_key)?;
+    let audit_kp = load_or_create_audit_key(&cfg.daemon.audit_key)?;
     let audit_pub_hex = audit_kp.public_hex();
     rotate_existing_log(&cfg.daemon.audit_log)?;
     if let Some(parent) = cfg.daemon.audit_log.parent() {
@@ -282,8 +291,8 @@ async fn main() -> anyhow::Result<()> {
     let session_pub_hex = encode_hex(session.verifying_key().as_bytes());
 
     let read_only = cfg.modes.default == OperationMode::ReadOnly;
-    let tools = discover_tools(&args.bundle_dir, &trust, read_only);
-    let model = args.model.clone().unwrap_or_else(|| {
+    let tools = discover_tools(&cfg.daemon.bundle_dir, &trust, read_only);
+    let model = cfg.llm.model.clone().unwrap_or_else(|| {
         match backend.name() {
             "anthropic" => "claude-sonnet-4-6",
             _ => "llama3",
@@ -296,18 +305,24 @@ async fn main() -> anyhow::Result<()> {
         SocketExecTransport::new(cfg.sockets.exec.clone()),
         policy,
         trust,
-        args.bundle_dir.clone(),
+        cfg.daemon.bundle_dir.clone(),
         audit,
         session,
         model,
-        args.max_tokens,
+        cfg.llm.max_tokens,
         tools,
     );
     orchestrator.start().map_err(|e| anyhow!("audit start: {e}"))?;
 
-    // The executor must be configured with this session key (architecture
-    // §4.2: rotated each daemon restart, handed over out of band).
-    eprintln!("archangel-execd must be started with --session-pubkey-hex {session_pub_hex}");
+    // Publish the session public key for the executor (architecture §4.2:
+    // rotated each daemon restart). The executor reads this file per
+    // connection, so it transparently picks up a new key on restart.
+    publish_session_pub(&cfg.daemon.session_pub, &session_pub_hex)
+        .context("publishing session public key")?;
+    eprintln!(
+        "session public key published to {} ({session_pub_hex})",
+        cfg.daemon.session_pub.display()
+    );
     eprintln!("audit log public key (pin this for `archangelctl audit-tail --key`): {audit_pub_hex}");
 
     if cfg.sockets.control.exists() {
@@ -323,12 +338,24 @@ async fn main() -> anyhow::Result<()> {
         std::fs::Permissions::from_mode(cfg.sockets.control_mode),
     )
     .context("chmod control socket")?;
+    let operator_uid = cfg.sockets.operator_uid;
     info!(
         socket = %cfg.sockets.control.display(),
-        operator_uid = args.operator_uid,
+        operator_uid,
         "control plane listening"
     );
 
+    serve_ctl_loop(listener, operator_uid, operator_pub, orchestrator).await;
+    Ok(())
+}
+
+/// Serial control-plane accept loop (v0.1). Never returns.
+async fn serve_ctl_loop(
+    listener: UnixListener,
+    operator_uid: u32,
+    operator_pub: ed25519_dalek::VerifyingKey,
+    mut orchestrator: Orchestrator<AnyBackend, SocketExecTransport, std::fs::File>,
+) {
     loop {
         let (mut stream, _) = match listener.accept().await {
             Ok(v) => v,
@@ -338,7 +365,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
         match stream.peer_cred() {
-            Ok(c) if c.uid() == args.operator_uid => {}
+            Ok(c) if c.uid() == operator_uid => {}
             Ok(c) => {
                 warn!(uid = c.uid(), "rejecting unauthorized control peer");
                 continue;
@@ -349,7 +376,8 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        if let Err(e) = serve_connection(&mut stream, &operator_pub, &mut orchestrator).await
+        if let Err(e) =
+            serve_connection(&mut stream, &operator_pub, &mut orchestrator).await
         {
             warn!(error = %e, "control connection ended with error");
         }

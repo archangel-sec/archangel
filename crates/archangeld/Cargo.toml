@@ -39,6 +39,8 @@ assets = [
     ["../../packaging/etc-archangel/archangel.toml.example", "etc/archangel/", "640"],
     ["../../packaging/etc-archangel/policies/denylist.toml", "etc/archangel/policies/", "640"],
     ["../../packaging/etc-archangel/exec/README.md", "etc/archangel/exec/", "644"],
+    ["../../packaging/etc-archangel/exec/read-uptime.exec", "etc/archangel/exec/", "644"],
+    ["../../packaging/tmpfiles.d/archangel.conf", "usr/lib/tmpfiles.d/", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -52,6 +54,7 @@ pre_uninstall_script = "packaging/maintainer/prerm"
 
 [dependencies]
 archangel-core = { workspace = true }
+archangel-config = { workspace = true }
 archangel-ipc = { workspace = true }
 archangel-ctl = { workspace = true }
 archangel-policy = { workspace = true }

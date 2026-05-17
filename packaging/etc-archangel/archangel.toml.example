@@ -7,21 +7,49 @@
 # settings that weaken security below the documented baseline.
 
 [daemon]
-# Path to the operator trust store (Ed25519 public keys allowed to sign
-# policies, .exec bundles, and approval requests).
+# Operator trust store: Ed25519 public keys allowed to sign .exec bundles
+# and policies. (Required.)
 trust_store = "/etc/archangel/trust/operators.pubkeys"
 
-# Optional pinned TLS material for the LLM endpoint.
-tls_pinning = "/etc/archangel/trust/ca.pem"
-
-# Path to the audit log (append-only).
+# Append-only audit log. (Required.)
 audit_log = "/var/log/archangel/audit.log.jsonl"
+
+# Persistent audit signing key (hex seed). Generated 0600 on first start
+# if absent. The daemon logs its public half at startup; pin that for
+# `archangelctl audit-tail --key`.
+audit_key = "/etc/archangel/trust/audit.key"
+
+# Pinned operator public key for control-plane (boundary A) auth. Create
+# it with `archangelctl init`.
+operator_pubkey = "/etc/archangel/trust/operator.pub"
+
+# Per-profile allowlist and signed .exec bundle directory.
+allowlist  = "/etc/archangel/policies/allowlist.toml"
+bundle_dir = "/etc/archangel/exec"
+
+# Where archangeld publishes its per-run session PUBLIC key for the
+# executor to read (rotated every restart). It is a public key; integrity
+# comes from the directory's permissions, not secrecy.
+session_pub = "/run/archangel/session.pub"
+
+# Optional pinned TLS material for the LLM endpoint (forward-looking).
+tls_pinning = "/etc/archangel/trust/ca.pem"
 
 [sockets]
 control = "/run/archangel/ctl.sock"
-control_mode = 0o660
+control_mode = 0o660            # must NOT grant 'other' (fail-closed)
 control_group = "archangel"
 exec = "/run/archangel/exec.sock"
+
+# REQUIRED — there is no insecure default for either.
+#   operator_uid : the UID of the human operator allowed to use the
+#                  control socket (e.g. `id -u youruser`).
+#   daemon_uid   : the UID archangeld runs as; the executor only accepts
+#                  exec-socket connections from this UID
+#                  (under systemd: `id -u archangel`).
+# For a single-user manual test, set BOTH to your own `id -u`.
+operator_uid = 1000
+daemon_uid   = 1000
 
 [session]
 # Maximum concurrent sessions per operator.
@@ -33,8 +61,14 @@ ttl_seconds = 3600
 per_task_isolation = true
 
 [llm]
-# Active backend. Override via `archangelctl session start --backend=<name>`.
-default_backend = "anthropic"
+# Active backend: "anthropic" or "ollama". For offline first tests use
+# "ollama" (no API key). For "anthropic" the token comes from the
+# ARCHANGEL_LLM_TOKEN environment variable / systemd credential, NEVER
+# from this file.
+default_backend = "ollama"
+# Model id. Omit to let the daemon pick a per-backend default.
+# model = "claude-sonnet-4-6"
+max_tokens = 1024
 
 [llm.prompts]
 # Spotlighting delimiters (#2) are randomized per session at runtime; this
