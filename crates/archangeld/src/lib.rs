@@ -9,6 +9,8 @@
 //! - [`prompt`] — defense layers #1–#4 against prompt injection.
 //! - [`response`] — layer #5: strict, bounded parsing of model output.
 //! - [`session`] — per-session signing for trust boundary B.
+//! - [`orchestrator`] — the read-only end-to-end pipeline tying every
+//!   layer together and recording the decision chain to the audit log.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -19,6 +21,9 @@ pub mod prompt;
 pub mod response;
 /// Per-session identity and `ExecRequest` signing (boundary B).
 pub mod session;
+/// The read-only orchestration pipeline.
+pub mod orchestrator;
 
+pub use orchestrator::{ExecTransport, Orchestrator, OrchestratorError, TaskOutcome};
 pub use response::{parse_model_response, ModelAction, ResponseError};
 pub use session::Session;

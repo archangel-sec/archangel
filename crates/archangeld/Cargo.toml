@@ -38,3 +38,11 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 ed25519-dalek = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+# In-process end-to-end test: the orchestrator drives the REAL executor
+# pipeline (archangel-execd) so the whole read-only spine is exercised.
+archangel-execd = { workspace = true }
+async-trait = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

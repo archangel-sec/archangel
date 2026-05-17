@@ -37,6 +37,7 @@ archangel-audit = { path = "crates/archangel-audit", version = "0.0.0" }
 archangel-llm = { path = "crates/archangel-llm", version = "0.0.0" }
 archangel-sandbox = { path = "crates/archangel-sandbox", version = "0.0.0" }
 archangel-exec-format = { path = "crates/archangel-exec-format", version = "0.0.0" }
+archangel-execd = { path = "crates/archangel-execd", version = "0.0.0" }
 
 # Async runtime
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "signal", "sync", "time"] }
