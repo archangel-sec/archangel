@@ -203,6 +203,7 @@ dependencies = [
  "archangel-audit",
  "archangel-core",
  "archangel-exec-format",
+ "archangel-ipc",
  "archangel-llm",
  "archangel-policy",
  "clap",

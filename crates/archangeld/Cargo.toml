@@ -21,6 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 archangel-core = { workspace = true }
+archangel-ipc = { workspace = true }
 archangel-policy = { workspace = true }
 archangel-audit = { workspace = true }
 archangel-llm = { workspace = true }
