@@ -94,6 +94,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "archangel-ctl"
+version = "0.0.0"
+dependencies = [
+ "archangel-core",
+ "ciborium",
+ "ed25519-dalek",
+ "serde",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "archangel-exec-format"
 version = "0.0.0"
 dependencies = [

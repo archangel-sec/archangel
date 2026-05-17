@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/archangel-core",
     "crates/archangel-ipc",
+    "crates/archangel-ctl",
     "crates/archangel-policy",
     "crates/archangel-audit",
     "crates/archangel-llm",
@@ -32,6 +33,7 @@ categories = ["command-line-utilities", "os::linux-apis"]
 # Local crates
 archangel-core = { path = "crates/archangel-core", version = "0.0.0" }
 archangel-ipc = { path = "crates/archangel-ipc", version = "0.0.0" }
+archangel-ctl = { path = "crates/archangel-ctl", version = "0.0.0" }
 archangel-policy = { path = "crates/archangel-policy", version = "0.0.0" }
 archangel-audit = { path = "crates/archangel-audit", version = "0.0.0" }
 archangel-llm = { path = "crates/archangel-llm", version = "0.0.0" }
