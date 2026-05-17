@@ -197,6 +197,7 @@ dependencies = [
  "anyhow",
  "archangel-audit",
  "archangel-core",
+ "archangel-ctl",
  "clap",
  "ed25519-dalek",
  "rand 0.8.6",

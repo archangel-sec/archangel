@@ -21,12 +21,18 @@
 mod error;
 /// Verify and display an audit log.
 pub mod audit_view;
+/// Signed control-plane client (boundary A).
+pub mod client;
 /// Operator key material.
 pub mod keys;
 /// Secure terminal rendering.
 pub mod render;
+/// Safe rendering of daemon control responses.
+pub mod view;
 
 pub use audit_view::verify_and_render;
+pub use client::CtlClient;
 pub use error::CtlError;
 pub use keys::{init_operator_key, load_operator_key};
 pub use render::{sanitize_untrusted, Block, Palette};
+pub use view::render_response;
