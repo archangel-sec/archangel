@@ -19,6 +19,24 @@ workspace = true
 name = "archangelctl"
 path = "src/main.rs"
 
+# --- Packaging (pre-alpha; NOT for production — see README) ----------------
+[package.metadata.deb]
+maintainer = "Archangel contributors <security@archangel-sec.org>"
+section = "admin"
+priority = "optional"
+depends = "$auto"
+extended-description = """\
+Operator CLI for archangel. Never privileged; holds the operator signing \
+key and talks to the daemon over the control socket. Pre-alpha."""
+assets = [
+    ["target/release/archangelctl", "usr/bin/", "755"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/archangelctl", dest = "/usr/bin/archangelctl", mode = "755" },
+]
+
 [dependencies]
 archangel-core = { workspace = true }
 archangel-audit = { workspace = true }

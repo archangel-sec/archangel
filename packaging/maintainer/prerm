@@ -1,0 +1,13 @@
+#!/bin/sh
+# Archangel pre-removal: stop the services if systemd is managing them.
+# Does NOT delete the audit log, keys, or config — operators must remove
+# those deliberately (destroying the tamper-evident audit trail on package
+# removal would be exactly the wrong default).
+set -eu
+
+if [ -d /run/systemd/system ]; then
+    systemctl stop archangeld.service       >/dev/null 2>&1 || true
+    systemctl stop archangel-execd.service  >/dev/null 2>&1 || true
+fi
+
+exit 0

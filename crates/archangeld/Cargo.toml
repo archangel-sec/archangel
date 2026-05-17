@@ -19,6 +19,37 @@ workspace = true
 name = "archangeld"
 path = "src/main.rs"
 
+# --- Packaging (pre-alpha; NOT for production — see README) ----------------
+# `cargo deb -p archangeld` / `cargo generate-rpm -p archangeld`. The
+# archangeld package is the "main" package: it ships the /etc/archangel
+# tree, the maintainer scripts (system users + dirs), and its own unit.
+[package.metadata.deb]
+maintainer = "Archangel contributors <security@archangel-sec.org>"
+section = "admin"
+priority = "optional"
+depends = "$auto, systemd"
+maintainer-scripts = "../../packaging/maintainer/"
+extended-description = """\
+LLM-facing archangel daemon (trust tier T3). Talks to the model and \
+evaluates policy; never mutates the system itself. Pre-alpha: do not run \
+in production."""
+assets = [
+    ["target/release/archangeld", "usr/bin/", "755"],
+    ["../../systemd/archangeld.service", "lib/systemd/system/", "644"],
+    ["../../packaging/etc-archangel/archangel.toml.example", "etc/archangel/", "640"],
+    ["../../packaging/etc-archangel/policies/denylist.toml", "etc/archangel/policies/", "640"],
+    ["../../packaging/etc-archangel/exec/README.md", "etc/archangel/exec/", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/archangeld", dest = "/usr/bin/archangeld", mode = "755" },
+    { source = "systemd/archangeld.service", dest = "/lib/systemd/system/archangeld.service", mode = "644" },
+    { source = "packaging/etc-archangel/archangel.toml.example", dest = "/etc/archangel/archangel.toml.example", mode = "640" },
+]
+post_install_script = "packaging/maintainer/postinst"
+pre_uninstall_script = "packaging/maintainer/prerm"
+
 [dependencies]
 archangel-core = { workspace = true }
 archangel-ipc = { workspace = true }

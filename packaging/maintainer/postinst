@@ -1,0 +1,51 @@
+#!/bin/sh
+# Archangel post-install: create the privilege-separated system identities
+# and runtime directories. Idempotent — safe to re-run on upgrade.
+#
+# Trust separation (see docs/THREAT_MODEL.md):
+#   archangel        — the LLM-facing daemon (T3). No mutation rights.
+#   archangel-exec   — the executor (T2). The only mutator.
+#   archangel-audit  — owns the append-only audit log; both can append,
+#                       neither can rewrite history.
+set -eu
+
+addgroup_idempotent() {
+    getent group "$1" >/dev/null 2>&1 || groupadd --system "$1"
+}
+
+adduser_idempotent() {
+    # $1 = user, $2 = primary group
+    getent passwd "$1" >/dev/null 2>&1 || useradd \
+        --system \
+        --gid "$2" \
+        --no-create-home \
+        --home-dir /nonexistent \
+        --shell /usr/sbin/nologin \
+        "$1"
+}
+
+addgroup_idempotent archangel
+addgroup_idempotent archangel-exec
+addgroup_idempotent archangel-audit
+
+adduser_idempotent archangel       archangel
+adduser_idempotent archangel-exec  archangel-exec
+
+# Both daemons append to the audit log; add them to the audit group.
+usermod -aG archangel-audit archangel      >/dev/null 2>&1 || true
+usermod -aG archangel-audit archangel-exec >/dev/null 2>&1 || true
+
+# Runtime / state / log directories with least-privilege ownership.
+install -d -m 0750 -o archangel      -g archangel       /var/lib/archangel
+install -d -m 0750 -o archangel-exec -g archangel-exec  /var/lib/archangel-exec
+install -d -m 2750 -o archangel      -g archangel-audit /var/log/archangel
+install -d -m 0750 -o root           -g archangel       /etc/archangel
+install -d -m 0750 -o root           -g archangel       /etc/archangel/trust
+install -d -m 0750 -o root           -g archangel       /etc/archangel/policies
+install -d -m 0750 -o root           -g archangel       /etc/archangel/exec
+
+echo "archangel: system users and directories ready."
+echo "Next: 'archangelctl init' to create the operator key, then review"
+echo "/etc/archangel/archangel.toml and run 'archangelctl doctor'."
+
+exit 0

@@ -44,6 +44,15 @@ enum Command {
         #[arg(long, default_value = "/etc/archangel/trust/operator.pub")]
         public: PathBuf,
     },
+    /// Check whether this host is ready to run archangel.
+    Doctor {
+        /// Config directory expected to exist.
+        #[arg(long, default_value = "/etc/archangel")]
+        etc: PathBuf,
+        /// Operator key expected to exist.
+        #[arg(long, default_value = "/etc/archangel/trust/operator.key")]
+        operator_key: PathBuf,
+    },
     /// Verify an audit log against a pinned public key and display it.
     AuditTail {
         /// Path to `audit.log.jsonl`.
@@ -181,6 +190,15 @@ async fn main() -> ExitCode {
                     eprintln!("init failed: {e}");
                     ExitCode::from(1)
                 }
+            }
+        }
+        Command::Doctor { etc, operator_key } => {
+            let report = archangelctl::doctor::diagnose(&etc, &operator_key);
+            println!("{}", report.render(palette));
+            if report.is_ok() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(2)
             }
         }
         Command::AuditTail { log, key } => match std::fs::read(&log) {

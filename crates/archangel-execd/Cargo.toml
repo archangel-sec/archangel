@@ -19,6 +19,29 @@ workspace = true
 name = "archangel-execd"
 path = "src/main.rs"
 
+# --- Packaging (pre-alpha; NOT for production — see README) ----------------
+# Ships the executor binary + its hardened unit. System users/dirs are
+# created by the archangeld package's maintainer scripts (install it too).
+[package.metadata.deb]
+maintainer = "Archangel contributors <security@archangel-sec.org>"
+section = "admin"
+priority = "optional"
+depends = "$auto, systemd, archangeld"
+extended-description = """\
+The archangel executor (trust tier T2): the only component that mutates \
+the system, signed-request only, sandboxed. Pre-alpha: do not run in \
+production."""
+assets = [
+    ["target/release/archangel-execd", "usr/bin/", "755"],
+    ["../../systemd/archangel-execd.service", "lib/systemd/system/", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/archangel-execd", dest = "/usr/bin/archangel-execd", mode = "755" },
+    { source = "systemd/archangel-execd.service", dest = "/lib/systemd/system/archangel-execd.service", mode = "644" },
+]
+
 # Trust tier T2 — the only component that mutates the system. The
 # dependency surface is kept deliberately minimal: every crate here is in
 # the executor's TCB and a target for external audit. archangel-sandbox
