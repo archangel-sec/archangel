@@ -207,8 +207,10 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "archangel-audit",
+ "archangel-config",
  "archangel-core",
  "archangel-ctl",
+ "archangel-exec-format",
  "clap",
  "ed25519-dalek",
  "rand 0.8.6",

@@ -29,6 +29,8 @@ pub mod doctor;
 pub mod keys;
 /// Secure terminal rendering.
 pub mod render;
+/// One-command bootstrap wizard.
+pub mod setup;
 /// Safe rendering of daemon control responses.
 pub mod view;
 
@@ -38,4 +40,5 @@ pub use doctor::{diagnose, Report};
 pub use error::CtlError;
 pub use keys::{init_operator_key, load_operator_key};
 pub use render::{sanitize_untrusted, Block, Palette};
+pub use setup::{run as run_setup, SetupOptions};
 pub use view::render_response;
