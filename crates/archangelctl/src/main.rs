@@ -44,6 +44,14 @@ enum Command {
         #[arg(long, default_value = "/etc/archangel/trust/operator.pub")]
         public: PathBuf,
     },
+    /// Sign a `.exec` bundle manifest with the operator key.
+    BundleSign {
+        /// The `.exec` manifest to sign.
+        manifest: PathBuf,
+        /// Operator secret key.
+        #[arg(long, default_value = "/etc/archangel/trust/operator.key")]
+        secret: PathBuf,
+    },
     /// Check whether this host is ready to run archangel.
     Doctor {
         /// Config directory expected to exist.
@@ -188,6 +196,18 @@ async fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("init failed: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Command::BundleSign { manifest, secret } => {
+            match keys::sign_bundle(&secret, &manifest) {
+                Ok(sig) => {
+                    println!("signed: {}", sig.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("bundle-sign failed: {e}");
                     ExitCode::from(1)
                 }
             }

@@ -1,0 +1,15 @@
+[meta]
+name = "read-uptime"
+version = "1.0.0"
+risk = "low"
+read_only = true
+
+[sandbox]
+syscall_profile = "inspect"
+network = "none"
+timeout_seconds = 10
+
+[payload]
+type = "bash"
+sha256 = "dd291cd6294bafef2a7e9c378eb320e87198d6dae214272addb569775750c802"
+inline = "uptime"

@@ -270,6 +270,7 @@ async fn main() -> anyhow::Result<()> {
         .context("invalid operator public key")?;
 
     let audit_kp = load_or_create_audit_key(&args.audit_key)?;
+    let audit_pub_hex = audit_kp.public_hex();
     rotate_existing_log(&cfg.daemon.audit_log)?;
     if let Some(parent) = cfg.daemon.audit_log.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -307,6 +308,7 @@ async fn main() -> anyhow::Result<()> {
     // The executor must be configured with this session key (architecture
     // §4.2: rotated each daemon restart, handed over out of band).
     eprintln!("archangel-execd must be started with --session-pubkey-hex {session_pub_hex}");
+    eprintln!("audit log public key (pin this for `archangelctl audit-tail --key`): {audit_pub_hex}");
 
     if cfg.sockets.control.exists() {
         std::fs::remove_file(&cfg.sockets.control).ok();

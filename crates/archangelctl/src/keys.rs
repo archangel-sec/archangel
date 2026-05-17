@@ -17,7 +17,7 @@ use std::{
     path::Path,
 };
 
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer as _, SigningKey};
 
 use archangel_core::SecretString;
 
@@ -102,6 +102,27 @@ pub fn init_operator_key(
         .map_err(|e| CtlError::Key(format!("write public: {e}")))?;
 
     Ok(public_hex)
+}
+
+/// Sign a `.exec` manifest with the operator key, writing the detached
+/// `<manifest>.exec.sig` next to it.
+///
+/// The signature covers the **exact bytes** of the manifest file — the
+/// same bytes the executor will verify. Returns the signature file path.
+pub fn sign_bundle(
+    secret_path: &Path,
+    manifest_path: &Path,
+) -> Result<std::path::PathBuf, CtlError> {
+    let key = load_operator_key(secret_path)?;
+    let bytes = std::fs::read(manifest_path)
+        .map_err(|e| CtlError::Key(format!("read manifest: {e}")))?;
+    let sig = key.sign(&bytes).to_bytes();
+    let mut sig_path = manifest_path.as_os_str().to_owned();
+    sig_path.push(".sig");
+    let sig_path = std::path::PathBuf::from(sig_path);
+    std::fs::write(&sig_path, encode_hex(&sig))
+        .map_err(|e| CtlError::Key(format!("write signature: {e}")))?;
+    Ok(sig_path)
 }
 
 /// Load an operator signing key from a hex secret file.
