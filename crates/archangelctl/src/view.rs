@@ -55,6 +55,24 @@ fn render_outcome(palette: Palette, outcome: &CtlOutcome) -> String {
                 sanitize_untrusted(reason)
             ),
         ),
+        CtlOutcome::ApprovalRequired {
+            exec,
+            reason,
+            two_person,
+        } => trusted_line(
+            palette,
+            Block::Approval,
+            &format!(
+                "approval required for {}: {}{}",
+                sanitize_untrusted(exec),
+                sanitize_untrusted(reason),
+                if *two_person {
+                    " [TWO-PERSON RULE: two operator signatures needed]"
+                } else {
+                    ""
+                }
+            ),
+        ),
         CtlOutcome::Compromised => trusted_line(
             palette,
             Block::Error,

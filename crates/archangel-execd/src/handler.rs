@@ -241,11 +241,23 @@ impl<R: ActionRunner> Executor<R> {
             profile: &request.profile,
             mode: request.mode,
             exec: &request.exec_name,
+            risk: manifest.meta.risk,
             commands: &commands,
             paths: &intents,
         });
         match decision {
             PolicyDecision::Allow => Ok(()),
+            // Defense in depth: the executor has no approval channel. If
+            // policy says a human must approve, the daemon should only
+            // ever forward an *already-approved* action; an unapproved one
+            // reaching T2 is refused outright (fail-closed).
+            PolicyDecision::RequireApproval { reason, .. } => {
+                Err(ExecResponse::rejected(
+                    request.action_id,
+                    RejectStage::ApprovalRequired,
+                    format!("requires operator approval, not presented: {reason}"),
+                ))
+            }
             PolicyDecision::Deny {
                 category, reason, ..
             } => Err(ExecResponse::rejected(

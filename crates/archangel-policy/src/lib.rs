@@ -36,13 +36,24 @@ pub use allowlist::{Allowlist, ProfileAllow};
 pub use denylist::{DenyCategory, DenyMatch, Denylist, PathAccess};
 pub use error::PolicyError;
 
-use archangel_core::OperationMode;
+use archangel_core::{OperationMode, RiskLevel};
 
 /// The outcome of evaluating an action against policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyDecision {
-    /// Permitted: nothing denied, and the allowlist explicitly permits it.
+    /// Permitted to run now: nothing denied, allowlisted, and no human
+    /// approval is required for this mode/risk.
     Allow,
+    /// Not denied and allowlisted, but a human must approve it first
+    /// (layer #13). The executor MUST NOT run it until a valid operator
+    /// approval is presented.
+    RequireApproval {
+        /// Why approval is required (mode/risk), for the operator + audit.
+        reason: String,
+        /// `true` if two independent operator signatures are required
+        /// (layer #14 — `risk = "critical"`).
+        two_person: bool,
+    },
     /// Forbidden by the immutable denylist. This is final.
     Deny {
         /// Category of the denylist rule that fired.
@@ -60,10 +71,18 @@ pub enum PolicyDecision {
 }
 
 impl PolicyDecision {
-    /// `true` only for [`PolicyDecision::Allow`].
+    /// `true` only for [`PolicyDecision::Allow`] — i.e. safe to run *now*
+    /// with no further gating. `RequireApproval` is deliberately NOT
+    /// "allowed": callers must route it through the approval flow.
     #[must_use]
     pub const fn is_allowed(&self) -> bool {
         matches!(self, Self::Allow)
+    }
+
+    /// `true` if the action is permissible but gated on human approval.
+    #[must_use]
+    pub const fn needs_approval(&self) -> bool {
+        matches!(self, Self::RequireApproval { .. })
     }
 }
 
@@ -85,6 +104,8 @@ pub struct PolicyRequest<'a> {
     pub mode: OperationMode,
     /// The `.exec` bundle name the action resolved to.
     pub exec: &'a str,
+    /// Risk the **verified** bundle declares (drives approval / two-person).
+    pub risk: RiskLevel,
     /// Commands the bundle would execute (denylist backstop input).
     pub commands: &'a [&'a str],
     /// Paths the bundle would touch.
@@ -144,18 +165,39 @@ impl PolicyEngine {
         }
 
         // 3. Allowlist must explicitly permit this exec for profile+mode.
-        if self
+        if !self
             .allowlist
             .is_allowed(request.profile, request.exec, request.mode)
         {
-            PolicyDecision::Allow
-        } else {
-            PolicyDecision::NotAllowed {
+            return PolicyDecision::NotAllowed {
                 reason: format!(
                     "exec {:?} is not allowlisted for profile {:?} in {:?} mode",
                     request.exec, request.profile, request.mode
                 ),
+            };
+        }
+
+        // 4. Approval gating (layers #13/#14). Allowlisted + not denied,
+        //    but a human may still need to approve before it runs:
+        //    - interactive mode: every action is approved by the operator;
+        //    - critical risk: two-person rule, in ANY mode (defense in
+        //      depth — even autonomous cannot self-authorize a critical).
+        let two_person = request.risk.requires_two_person_rule();
+        if request.mode.requires_human_approval() {
+            PolicyDecision::RequireApproval {
+                reason: format!(
+                    "interactive mode requires operator approval (risk={:?})",
+                    request.risk
+                ),
+                two_person,
             }
+        } else if two_person {
+            PolicyDecision::RequireApproval {
+                reason: "critical risk requires the two-person rule".to_owned(),
+                two_person: true,
+            }
+        } else {
+            PolicyDecision::Allow
         }
     }
 }
@@ -171,7 +213,7 @@ fn deny_from(m: &DenyMatch) -> PolicyDecision {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use archangel_core::OperationMode;
+    use archangel_core::{OperationMode, RiskLevel};
 
     use super::{
         Allowlist, PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest,
@@ -184,85 +226,181 @@ mod tests {
 name = "default"
 mode = "read_only"
 allowed_exec = ["read-logs"]
+
+[[profile]]
+name = "ops"
+mode = "interactive"
+allowed_exec = ["restart-svc", "danger-op"]
+
+[[profile]]
+name = "auto"
+mode = "autonomous"
+allowed_exec = ["rotate-logs", "wipe-disk"]
 "#,
         )
         .expect("valid allowlist");
         PolicyEngine::new(al)
     }
 
+    fn req<'a>(
+        profile: &'a str,
+        mode: OperationMode,
+        exec: &'a str,
+        risk: RiskLevel,
+        commands: &'a [&'a str],
+        paths: &'a [PathIntent<'a>],
+    ) -> PolicyRequest<'a> {
+        PolicyRequest {
+            profile,
+            mode,
+            exec,
+            risk,
+            commands,
+            paths,
+        }
+    }
+
     #[test]
-    fn allowlisted_benign_action_is_allowed() {
-        let req = PolicyRequest {
-            profile: "default",
-            mode: OperationMode::ReadOnly,
-            exec: "read-logs",
-            commands: &["journalctl -u nginx --no-pager -n 100"],
-            paths: &[PathIntent {
+    fn read_only_benign_action_runs_without_approval() {
+        let r = req(
+            "default",
+            OperationMode::ReadOnly,
+            "read-logs",
+            RiskLevel::Low,
+            &["journalctl -u nginx --no-pager -n 100"],
+            &[PathIntent {
                 path: "/var/log/nginx/access.log",
                 access: PathAccess::Read,
             }],
-        };
-        assert_eq!(engine().evaluate(&req), PolicyDecision::Allow);
+        );
+        assert_eq!(engine().evaluate(&r), PolicyDecision::Allow);
     }
 
     #[test]
     fn denylisted_command_overrides_everything() {
-        // Even an allowlisted exec cannot run a denylisted command.
-        let req = PolicyRequest {
-            profile: "default",
-            mode: OperationMode::ReadOnly,
-            exec: "read-logs",
-            commands: &["rm -rf /"],
-            paths: &[],
-        };
-        assert!(matches!(
-            engine().evaluate(&req),
-            PolicyDecision::Deny { .. }
-        ));
+        let r = req(
+            "default",
+            OperationMode::ReadOnly,
+            "read-logs",
+            RiskLevel::Low,
+            &["rm -rf /"],
+            &[],
+        );
+        assert!(matches!(engine().evaluate(&r), PolicyDecision::Deny { .. }));
     }
 
     #[test]
     fn denylisted_path_overrides_allowlist() {
-        let req = PolicyRequest {
-            profile: "default",
-            mode: OperationMode::ReadOnly,
-            exec: "read-logs",
-            commands: &[],
-            paths: &[PathIntent {
+        let r = req(
+            "default",
+            OperationMode::ReadOnly,
+            "read-logs",
+            RiskLevel::Low,
+            &[],
+            &[PathIntent {
                 path: "/etc/archangel/../archangel/keys/audit.key",
                 access: PathAccess::Write,
             }],
-        };
-        assert!(matches!(
-            engine().evaluate(&req),
-            PolicyDecision::Deny { .. }
-        ));
+        );
+        assert!(matches!(engine().evaluate(&r), PolicyDecision::Deny { .. }));
     }
 
     #[test]
-    fn not_allowlisted_is_refused_not_allowed() {
-        let req = PolicyRequest {
-            profile: "default",
-            mode: OperationMode::ReadOnly,
-            exec: "totally-unknown-exec",
-            commands: &[],
-            paths: &[],
-        };
+    fn not_allowlisted_is_refused() {
+        let r = req(
+            "default",
+            OperationMode::ReadOnly,
+            "totally-unknown-exec",
+            RiskLevel::Low,
+            &[],
+            &[],
+        );
         assert!(matches!(
-            engine().evaluate(&req),
+            engine().evaluate(&r),
             PolicyDecision::NotAllowed { .. }
         ));
     }
 
     #[test]
-    fn wrong_mode_is_refused() {
-        let req = PolicyRequest {
-            profile: "default",
-            mode: OperationMode::Autonomous,
-            exec: "read-logs",
-            commands: &[],
-            paths: &[],
-        };
-        assert!(!engine().evaluate(&req).is_allowed());
+    fn interactive_mode_always_requires_approval() {
+        // Layer #13: every action in interactive mode is gated on a human,
+        // and is NOT "allowed" (must not auto-execute).
+        let r = req(
+            "ops",
+            OperationMode::Interactive,
+            "restart-svc",
+            RiskLevel::Medium,
+            &["systemctl restart nginx"],
+            &[],
+        );
+        let d = engine().evaluate(&r);
+        assert!(matches!(
+            d,
+            PolicyDecision::RequireApproval { two_person: false, .. }
+        ));
+        assert!(!d.is_allowed(), "approval-gated must never be is_allowed()");
+        assert!(d.needs_approval());
+    }
+
+    #[test]
+    fn interactive_critical_requires_two_person() {
+        let r = req(
+            "ops",
+            OperationMode::Interactive,
+            "danger-op",
+            RiskLevel::Critical,
+            &[],
+            &[],
+        );
+        assert!(matches!(
+            engine().evaluate(&r),
+            PolicyDecision::RequireApproval { two_person: true, .. }
+        ));
+    }
+
+    #[test]
+    fn autonomous_low_risk_runs_unattended() {
+        let r = req(
+            "auto",
+            OperationMode::Autonomous,
+            "rotate-logs",
+            RiskLevel::Low,
+            &[],
+            &[],
+        );
+        assert_eq!(engine().evaluate(&r), PolicyDecision::Allow);
+    }
+
+    #[test]
+    fn autonomous_cannot_self_authorize_a_critical_action() {
+        // Layer #14: even autonomous mode needs the two-person rule for a
+        // critical action — it cannot rubber-stamp itself.
+        let r = req(
+            "auto",
+            OperationMode::Autonomous,
+            "wipe-disk",
+            RiskLevel::Critical,
+            &[],
+            &[],
+        );
+        assert!(matches!(
+            engine().evaluate(&r),
+            PolicyDecision::RequireApproval { two_person: true, .. }
+        ));
+    }
+
+    #[test]
+    fn wrong_mode_for_profile_is_refused() {
+        // "default" is a read_only profile; asking for it in autonomous
+        // mode must not be allowed.
+        let r = req(
+            "default",
+            OperationMode::Autonomous,
+            "read-logs",
+            RiskLevel::Low,
+            &[],
+            &[],
+        );
+        assert!(!engine().evaluate(&r).is_allowed());
     }
 }

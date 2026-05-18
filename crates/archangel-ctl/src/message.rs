@@ -49,6 +49,16 @@ pub enum CtlOutcome {
         /// Reason.
         reason: String,
     },
+    /// Allowlisted, but the action needs operator approval before it can
+    /// run (layers #13/#14). Nothing ran.
+    ApprovalRequired {
+        /// The `.exec` bundle awaiting approval.
+        exec: String,
+        /// Why approval is required (mode/risk).
+        reason: String,
+        /// Whether two independent operator signatures are required.
+        two_person: bool,
+    },
     /// The session was aborted (canary leak, #3).
     Compromised,
     /// The action ran on the executor.

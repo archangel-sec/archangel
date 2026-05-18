@@ -46,6 +46,15 @@ fn outcome_to_ctl(o: TaskOutcome) -> CtlOutcome {
         TaskOutcome::Asked { question } => CtlOutcome::Asked { question },
         TaskOutcome::Refused { reason } => CtlOutcome::Refused { reason },
         TaskOutcome::Denied { stage, reason } => CtlOutcome::Denied { stage, reason },
+        TaskOutcome::ApprovalRequired {
+            exec,
+            reason,
+            two_person,
+        } => CtlOutcome::ApprovalRequired {
+            exec,
+            reason,
+            two_person,
+        },
         TaskOutcome::Compromised => CtlOutcome::Compromised,
         TaskOutcome::Executed {
             exec,

@@ -84,6 +84,16 @@ pub enum TaskOutcome {
         /// Reason (also written to the audit log).
         reason: String,
     },
+    /// Allowlisted, but the action needs human approval before it can run
+    /// (layers #13/#14). Nothing ran — the operator must approve it.
+    ApprovalRequired {
+        /// The `.exec` bundle awaiting approval.
+        exec: String,
+        /// Why approval is required (mode/risk).
+        reason: String,
+        /// Whether two independent operator signatures are required.
+        two_person: bool,
+    },
     /// The session was aborted because the model leaked the canary (#3).
     Compromised,
     /// The action ran on the executor.
@@ -254,10 +264,11 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
             exec,
             &bundle,
         );
-        let (audit_decision, ok) = match &decision {
-            PolicyDecision::Allow => (Decision::Allow, true),
+        let audit_decision = match &decision {
+            PolicyDecision::Allow => Decision::Allow,
+            PolicyDecision::RequireApproval { .. } => Decision::RequireApproval,
             PolicyDecision::Deny { .. } | PolicyDecision::NotAllowed { .. } => {
-                (Decision::Deny, false)
+                Decision::Deny
             }
         };
         self.audit.append(AuditEvent::PolicyDecision {
@@ -267,11 +278,24 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
             decision: audit_decision,
             reason: format!("{reason} :: {decision:?}"),
         })?;
-        if !ok {
-            return Ok(TaskOutcome::Denied {
-                stage: "policy".to_owned(),
-                reason: format!("{decision:?}"),
-            });
+        match &decision {
+            PolicyDecision::Allow => {}
+            // Layers #13/#14: allowlisted but a human must approve. The
+            // action is NOT executed here — this closes the gap where
+            // interactive mode would have run without approval.
+            PolicyDecision::RequireApproval { reason, two_person } => {
+                return Ok(TaskOutcome::ApprovalRequired {
+                    exec: exec.to_owned(),
+                    reason: reason.clone(),
+                    two_person: *two_person,
+                });
+            }
+            PolicyDecision::Deny { .. } | PolicyDecision::NotAllowed { .. } => {
+                return Ok(TaskOutcome::Denied {
+                    stage: "policy".to_owned(),
+                    reason: format!("{decision:?}"),
+                });
+            }
         }
 
         // (boundary B) sign and dispatch.
@@ -322,6 +346,7 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
             profile,
             mode,
             exec,
+            risk: m.meta.risk,
             commands: &commands,
             paths: &intents,
         })
@@ -679,6 +704,74 @@ inline = "{payload}"
         orch.start().expect("start");
         let o = orch.run_task("do something", &[]).await.expect("ok");
         assert!(matches!(o, TaskOutcome::Refused { .. }));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn interactive_mode_requires_approval_and_runs_nothing() {
+        // Security-critical: in interactive mode the action must NOT run;
+        // it is gated on operator approval (#13). This closes the v0.1
+        // gap where interactive mode would have executed silently.
+        let dir = unique_dir();
+        write_bundle(&dir, "read-logs", true, "echo hi");
+        let mut buf = Vec::new();
+        {
+            let session = Session::new(OperationMode::Interactive, "ops");
+            let vk = session.verifying_key();
+            let pol = PolicyEngine::new(
+                Allowlist::from_toml(
+                    "[[profile]]\nname=\"ops\"\nmode=\"interactive\"\nallowed_exec=[\"read-logs\"]\n",
+                )
+                .expect("allowlist"),
+            );
+            let executor = Executor::new(
+                vk,
+                trust(),
+                pol.clone(),
+                dir.clone(),
+                ExecLimits::default(),
+                MockRunner,
+            );
+            let (log, _kp) = open_audit(&mut buf).expect("audit");
+            let mut orch = Orchestrator::new(
+                MockBackend {
+                    reply: r#"{"action":"read-logs","args":{"service":"nginx"},"reason":"check"}"#
+                        .to_owned(),
+                },
+                InProcess {
+                    executor: Mutex::new(executor),
+                },
+                pol,
+                trust(),
+                dir.clone(),
+                log,
+                session,
+                "mock-1",
+                256,
+                vec![ToolSpec {
+                    name: "read-logs".to_owned(),
+                    description: "tail a journal".to_owned(),
+                    read_only: true,
+                }],
+            );
+            orch.start().expect("start");
+            let o = orch.run_task("inspect nginx", &[]).await.expect("ok");
+            assert!(
+                matches!(
+                    &o,
+                    TaskOutcome::ApprovalRequired { exec, two_person: false, .. }
+                        if exec == "read-logs"
+                ),
+                "interactive mode must gate on approval, got {o:?}"
+            );
+        }
+        // The executor must never have run: no ExecCompleted in the audit.
+        let audit = String::from_utf8(buf).expect("utf8");
+        assert!(
+            !audit.contains("exec_completed"),
+            "nothing may execute before approval"
+        );
+        assert!(audit.contains("require_approval"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
