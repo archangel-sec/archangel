@@ -35,6 +35,17 @@ pub trait CtlService {
         context: &[(String, String)],
     ) -> impl core::future::Future<Output = CtlOutcome>;
 
+    /// Approve a pending action (#13). `action_digest` is echoed from the
+    /// `ApprovalRequired` the daemon sent and must bind the exact action.
+    fn approve(
+        &mut self,
+        approval_id: &str,
+        action_digest: &str,
+    ) -> impl core::future::Future<Output = CtlOutcome>;
+
+    /// Reject (discard) a pending action.
+    fn reject(&mut self, approval_id: &str) -> CtlOutcome;
+
     /// Reload the signed policy (v0.1: not yet supported — honest no).
     fn reload_policy(
         &mut self,
@@ -47,12 +58,18 @@ fn outcome_to_ctl(o: TaskOutcome) -> CtlOutcome {
         TaskOutcome::Refused { reason } => CtlOutcome::Refused { reason },
         TaskOutcome::Denied { stage, reason } => CtlOutcome::Denied { stage, reason },
         TaskOutcome::ApprovalRequired {
+            approval_id,
+            action_digest,
             exec,
             reason,
+            preview,
             two_person,
         } => CtlOutcome::ApprovalRequired {
+            approval_id,
+            action_digest,
             exec,
             reason,
+            preview,
             two_person,
         },
         TaskOutcome::Compromised => CtlOutcome::Compromised,
@@ -89,6 +106,20 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> CtlService
                 reason: format!("pipeline error: {e}"),
             },
         }
+    }
+
+    async fn approve(&mut self, approval_id: &str, action_digest: &str) -> CtlOutcome {
+        match Orchestrator::approve(self, approval_id, action_digest).await {
+            Ok(o) => outcome_to_ctl(o),
+            Err(e) => CtlOutcome::Denied {
+                stage: "daemon".to_owned(),
+                reason: format!("approval error: {e}"),
+            },
+        }
+    }
+
+    fn reject(&mut self, approval_id: &str) -> CtlOutcome {
+        outcome_to_ctl(Orchestrator::reject(self, approval_id))
     }
 
     async fn reload_policy(&mut self) -> (bool, String) {
@@ -168,6 +199,13 @@ pub async fn handle_ctl_frame<Svc: CtlService>(
         CtlRequest::RunTask { task, context } => {
             CtlResponse::Task(service.run_task(&task, &context).await)
         }
+        CtlRequest::Approve {
+            approval_id,
+            action_digest,
+        } => CtlResponse::Task(service.approve(&approval_id, &action_digest).await),
+        CtlRequest::Reject { approval_id } => {
+            CtlResponse::Task(service.reject(&approval_id))
+        }
         CtlRequest::ReloadPolicy => {
             let (ok, detail) = service.reload_policy().await;
             CtlResponse::PolicyReloaded { ok, detail }
@@ -195,6 +233,18 @@ mod tests {
             self.ran += 1;
             CtlOutcome::Refused {
                 reason: format!("mock saw: {task}"),
+            }
+        }
+        async fn approve(&mut self, id: &str, _digest: &str) -> CtlOutcome {
+            CtlOutcome::Denied {
+                stage: "mock".to_owned(),
+                reason: format!("approve {id}"),
+            }
+        }
+        fn reject(&mut self, id: &str) -> CtlOutcome {
+            CtlOutcome::Denied {
+                stage: "mock".to_owned(),
+                reason: format!("reject {id}"),
             }
         }
         async fn reload_policy(&mut self) -> (bool, String) {

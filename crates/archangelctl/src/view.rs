@@ -56,23 +56,45 @@ fn render_outcome(palette: Palette, outcome: &CtlOutcome) -> String {
             ),
         ),
         CtlOutcome::ApprovalRequired {
+            approval_id,
+            action_digest,
             exec,
             reason,
+            preview,
             two_person,
-        } => trusted_line(
-            palette,
-            Block::Approval,
-            &format!(
-                "approval required for {}: {}{}",
-                sanitize_untrusted(exec),
-                sanitize_untrusted(reason),
-                if *two_person {
-                    " [TWO-PERSON RULE: two operator signatures needed]"
-                } else {
-                    ""
-                }
-            ),
-        ),
+        } => {
+            // The header + the `/approve`/`/reject` lines are trusted
+            // chrome; the model/bundle-derived preview is untrusted and
+            // shown via the sanitizing block so it cannot spoof the prompt.
+            let header = trusted_line(
+                palette,
+                Block::Approval,
+                &format!(
+                    "APPROVAL REQUIRED — {}: {}{}",
+                    sanitize_untrusted(exec),
+                    sanitize_untrusted(reason),
+                    if *two_person {
+                        " [TWO-PERSON RULE]"
+                    } else {
+                        ""
+                    }
+                ),
+            );
+            let body = untrusted_block(
+                palette,
+                Block::Proposal,
+                "will run",
+                preview,
+            );
+            let prompt = trusted_line(
+                palette,
+                Block::Approval,
+                &format!(
+                    "/approve {approval_id} {action_digest}   |   /reject {approval_id}"
+                ),
+            );
+            format!("{header}\n{body}\n{prompt}")
+        }
         CtlOutcome::Compromised => trusted_line(
             palette,
             Block::Error,

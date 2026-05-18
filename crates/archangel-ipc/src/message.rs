@@ -64,9 +64,6 @@ pub enum RejectStage {
     DenylistHit,
     /// Not present in the active allowlist.
     NotAllowlisted,
-    /// Allowlisted but requires operator approval (#13/#14) that was not
-    /// presented to the executor.
-    ApprovalRequired,
     /// Argument schema validation failed.
     ArgRejected,
     /// This milestone executes read-only bundles only; this one mutates.

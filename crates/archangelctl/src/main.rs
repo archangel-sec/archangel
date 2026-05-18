@@ -155,9 +155,13 @@ async fn one_shot(
 
 async fn run_repl(mut client: CtlClient, palette: Palette) -> ExitCode {
     println!(
-        "archangel session — free text = a task for the model; \
+        "archangel session — free text = a task; /approve, /reject, \
          /ping, /help, /quit"
     );
+    // Remembers the most recent pending action so `/approve` (no args)
+    // works; the digest binds the approval to exactly what was shown.
+    let mut last_pending: Option<(String, String)> = None;
+
     loop {
         print!("› ");
         if std::io::stdout().flush().is_err() {
@@ -173,37 +177,96 @@ async fn run_repl(mut client: CtlClient, palette: Palette) -> ExitCode {
             }
         }
         let line = line.trim();
-        match line {
-            "" => {}
-            "/quit" | "/exit" => break,
-            "/help" => {
-                println!("  free text   → run as a task (read-only pipeline)");
-                println!("  /ping       → daemon liveness");
-                println!("  /quit       → exit");
+        let mut tok = line.split_whitespace();
+        let resp = match tok.next() {
+            None => None,
+            Some("/quit" | "/exit") => break,
+            Some("/help") => {
+                println!("  free text                → propose a task");
+                println!("  /approve [id digest]     → approve (default: last)");
+                println!("  /reject  [id]            → reject  (default: last)");
+                println!("  /ping  /quit");
+                None
             }
-            "/ping" => {
-                respond(&mut client, CtlRequest::Ping, palette).await;
+            Some("/ping") => send(&mut client, CtlRequest::Ping, palette).await,
+            Some("/approve") => {
+                let req = match (tok.next(), tok.next()) {
+                    (Some(id), Some(dig)) => Some(CtlRequest::Approve {
+                        approval_id: id.to_owned(),
+                        action_digest: dig.to_owned(),
+                    }),
+                    _ => last_pending.as_ref().map(|(id, dig)| {
+                        CtlRequest::Approve {
+                            approval_id: id.clone(),
+                            action_digest: dig.clone(),
+                        }
+                    }),
+                };
+                if let Some(r) = req {
+                    send(&mut client, r, palette).await
+                } else {
+                    println!("nothing pending to approve");
+                    None
+                }
             }
-            task => {
-                respond(
+            Some("/reject") => {
+                let id = tok
+                    .next()
+                    .map(ToOwned::to_owned)
+                    .or_else(|| last_pending.as_ref().map(|(i, _)| i.clone()));
+                if let Some(approval_id) = id {
+                    send(&mut client, CtlRequest::Reject { approval_id }, palette)
+                        .await
+                } else {
+                    println!("nothing pending to reject");
+                    None
+                }
+            }
+            Some(_) => {
+                send(
                     &mut client,
                     CtlRequest::RunTask {
-                        task: task.to_owned(),
+                        task: line.to_owned(),
                         context: Vec::new(),
                     },
                     palette,
                 )
-                .await;
+                .await
+            }
+        };
+
+        // Track / clear the pending action from the daemon's reply.
+        if let Some(archangel_ctl::CtlResponse::Task(outcome)) = &resp {
+            match outcome {
+                archangel_ctl::CtlOutcome::ApprovalRequired {
+                    approval_id,
+                    action_digest,
+                    ..
+                } => {
+                    last_pending =
+                        Some((approval_id.clone(), action_digest.clone()));
+                }
+                _ => last_pending = None,
             }
         }
     }
     ExitCode::SUCCESS
 }
 
-async fn respond(client: &mut CtlClient, req: CtlRequest, palette: Palette) {
+async fn send(
+    client: &mut CtlClient,
+    req: CtlRequest,
+    palette: Palette,
+) -> Option<archangel_ctl::CtlResponse> {
     match client.request(req).await {
-        Ok(resp) => println!("{}", view::render_response(palette, &resp)),
-        Err(e) => eprintln!("control request failed: {e}"),
+        Ok(resp) => {
+            println!("{}", view::render_response(palette, &resp));
+            Some(resp)
+        }
+        Err(e) => {
+            eprintln!("control request failed: {e}");
+            None
+        }
     }
 }
 

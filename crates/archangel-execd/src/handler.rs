@@ -246,18 +246,18 @@ impl<R: ActionRunner> Executor<R> {
             paths: &intents,
         });
         match decision {
-            PolicyDecision::Allow => Ok(()),
-            // Defense in depth: the executor has no approval channel. If
-            // policy says a human must approve, the daemon should only
-            // ever forward an *already-approved* action; an unapproved one
-            // reaching T2 is refused outright (fail-closed).
-            PolicyDecision::RequireApproval { reason, .. } => {
-                Err(ExecResponse::rejected(
-                    request.action_id,
-                    RejectStage::ApprovalRequired,
-                    format!("requires operator approval, not presented: {reason}"),
-                ))
-            }
+            // Approval (#13/#14) is a TRUST-TIER-T3 control, enforced by
+            // the daemon's orchestrator before it ever signs/dispatches a
+            // request. T2's job at this boundary is denylist + allowlist +
+            // signed-bundle + read-only + sandbox — those are what contain
+            // a *compromised* daemon (a T3 breach can still only run
+            // operator-signed, denylisted-checked bundles). The executor
+            // has no approval channel, so it does not (cannot) re-derive
+            // the approval decision; `RequireApproval` here means
+            // "allowlisted, gated upstream" and is passed. (A future
+            // operator-signed approval token verifiable at T2 is tracked
+            // as later hardening.)
+            PolicyDecision::Allow | PolicyDecision::RequireApproval { .. } => Ok(()),
             PolicyDecision::Deny {
                 category, reason, ..
             } => Err(ExecResponse::rejected(

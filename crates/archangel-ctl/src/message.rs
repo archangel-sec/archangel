@@ -22,6 +22,23 @@ pub enum CtlRequest {
         /// Labeled untrusted context: `(label, content)`.
         context: Vec<(String, String)>,
     },
+    /// Approve a pending action (layer #13). The `action_digest` is
+    /// echoed from the [`CtlOutcome::ApprovalRequired`] the daemon sent;
+    /// the daemon refuses the approval unless it matches the exact stored
+    /// action, so the operator can only ever approve *what was shown*.
+    /// The request itself is operator-signed (boundary A), so an approval
+    /// cannot be forged.
+    Approve {
+        /// Opaque id of the pending action.
+        approval_id: String,
+        /// Digest the daemon presented; bound to the exact action.
+        action_digest: String,
+    },
+    /// Reject a pending action; it is discarded, never run.
+    Reject {
+        /// Opaque id of the pending action.
+        approval_id: String,
+    },
     /// Ask the daemon to reload the signed allowlist/policy.
     ReloadPolicy,
 }
@@ -50,12 +67,20 @@ pub enum CtlOutcome {
         reason: String,
     },
     /// Allowlisted, but the action needs operator approval before it can
-    /// run (layers #13/#14). Nothing ran.
+    /// run (layers #13/#14). Nothing ran; reply with
+    /// [`CtlRequest::Approve`]/[`CtlRequest::Reject`].
     ApprovalRequired {
+        /// Opaque id to approve/reject.
+        approval_id: String,
+        /// Digest bound to the exact stored action; echo it in `Approve`.
+        action_digest: String,
         /// The `.exec` bundle awaiting approval.
         exec: String,
         /// Why approval is required (mode/risk).
         reason: String,
+        /// Human preview of exactly what will run (untrusted — sanitized
+        /// before display).
+        preview: String,
         /// Whether two independent operator signatures are required.
         two_person: bool,
     },

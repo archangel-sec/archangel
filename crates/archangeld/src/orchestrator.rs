@@ -19,7 +19,11 @@
 //! Generic over the backend, the executor transport, and the audit sink so
 //! the whole spine is exercised end to end in tests with no sockets.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use archangel_audit::{sha256_hex, AuditEvent, AuditKeypair, AuditLog, Decision, DurableSink};
 use archangel_exec_format::{OperatorTrust, VerifiedBundle};
@@ -87,10 +91,16 @@ pub enum TaskOutcome {
     /// Allowlisted, but the action needs human approval before it can run
     /// (layers #13/#14). Nothing ran — the operator must approve it.
     ApprovalRequired {
+        /// Opaque id the operator approves/rejects.
+        approval_id: String,
+        /// Digest bound to the exact stored action.
+        action_digest: String,
         /// The `.exec` bundle awaiting approval.
         exec: String,
         /// Why approval is required (mode/risk).
         reason: String,
+        /// Human preview of exactly what will run.
+        preview: String,
         /// Whether two independent operator signatures are required.
         two_person: bool,
     },
@@ -109,6 +119,66 @@ pub enum TaskOutcome {
     },
 }
 
+/// How long a pending approval stays valid. Short by design: an approval
+/// is a deliberate, immediate operator act, not something left lying
+/// around. Expired pendings are unusable (fail-closed).
+const APPROVAL_TTL_MS: u64 = 5 * 60 * 1000;
+
+/// Hard cap on simultaneously-pending approvals (anti-DoS).
+const MAX_PENDING: usize = 64;
+
+/// An action that passed every gate except the human approval (#13). The
+/// **already-signed** boundary-B frame is stored verbatim, so approving
+/// runs *exactly* what was proposed — not a re-derived action.
+struct Pending {
+    /// Signed `ExecRequest` frame, ready to send to the executor as-is.
+    frame: Vec<u8>,
+    action_id: archangel_core::ActionId,
+    exec: String,
+    /// Binds exec + args + bundle; the operator must echo this to approve.
+    digest: String,
+    /// Precomputed for the `ExecRequested` audit record on approval.
+    args_sha256: String,
+    two_person: bool,
+    created_ms: u64,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Unguessable 128-bit approval id (OS CSPRNG), hex-encoded.
+fn random_id() -> String {
+    use rand::RngCore as _;
+    let mut b = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut b);
+    let mut s = String::with_capacity(32);
+    for x in b {
+        s.push(char::from_digit(u32::from(x >> 4), 16).unwrap_or('0'));
+        s.push(char::from_digit(u32::from(x & 0x0f), 16).unwrap_or('0'));
+    }
+    s
+}
+
+/// Digest binding the approval to the EXACT action: exec name + canonical
+/// args + the signed bundle's payload hash. The operator approves this;
+/// the daemon refuses if it does not match the stored action.
+fn action_digest(
+    exec: &str,
+    args: &BTreeMap<String, String>,
+    payload_sha256: &str,
+) -> String {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(exec.as_bytes());
+    buf.push(0);
+    buf.extend_from_slice(&serde_json::to_vec(args).unwrap_or_default());
+    buf.push(0);
+    buf.extend_from_slice(payload_sha256.as_bytes());
+    sha256_hex(&buf)
+}
+
 /// The orchestrator. One per operator session.
 pub struct Orchestrator<B: LlmBackend, T: ExecTransport, S: DurableSink> {
     backend: B,
@@ -122,6 +192,7 @@ pub struct Orchestrator<B: LlmBackend, T: ExecTransport, S: DurableSink> {
     model: String,
     max_tokens: u32,
     tools: Vec<ToolSpec>,
+    pending: HashMap<String, Pending>,
 }
 
 impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
@@ -153,6 +224,7 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
             model: model.into(),
             max_tokens,
             tools,
+            pending: HashMap::new(),
         }
     }
 
@@ -278,27 +350,9 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
             decision: audit_decision,
             reason: format!("{reason} :: {decision:?}"),
         })?;
-        match &decision {
-            PolicyDecision::Allow => {}
-            // Layers #13/#14: allowlisted but a human must approve. The
-            // action is NOT executed here — this closes the gap where
-            // interactive mode would have run without approval.
-            PolicyDecision::RequireApproval { reason, two_person } => {
-                return Ok(TaskOutcome::ApprovalRequired {
-                    exec: exec.to_owned(),
-                    reason: reason.clone(),
-                    two_person: *two_person,
-                });
-            }
-            PolicyDecision::Deny { .. } | PolicyDecision::NotAllowed { .. } => {
-                return Ok(TaskOutcome::Denied {
-                    stage: "policy".to_owned(),
-                    reason: format!("{decision:?}"),
-                });
-            }
-        }
-
-        // (boundary B) sign and dispatch.
+        // Sign the boundary-B frame now (needed whether we run it
+        // immediately or stash it for approval — approving must run
+        // *exactly* this signed action, never a re-derived one).
         let envelope = self.session.sign_exec_request(
             action_id,
             exec,
@@ -307,17 +361,152 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
             bundle.manifest().meta.read_only,
         )?;
         let frame = envelope.to_frame()?;
+        let digest = action_digest(exec, &args, &bundle.manifest().payload.sha256);
+        let args_sha256 = sha256_hex(&serde_json::to_vec(&args).unwrap_or_default());
+
+        match &decision {
+            PolicyDecision::Allow => {
+                self.dispatch(sid, action_id, exec, &args_sha256, frame).await
+            }
+            // Layers #13/#14: allowlisted but a human must approve. The
+            // signed frame is stashed; nothing runs until `approve`.
+            PolicyDecision::RequireApproval { reason, two_person } => {
+                self.prune_pending();
+                if self.pending.len() >= MAX_PENDING {
+                    return Ok(TaskOutcome::Denied {
+                        stage: "approval".to_owned(),
+                        reason: "too many pending approvals".to_owned(),
+                    });
+                }
+                let approval_id = random_id();
+                let preview = format!(
+                    "exec={exec} risk={:?} read_only={} args={:?}\npayload: {}",
+                    bundle.manifest().meta.risk,
+                    bundle.manifest().meta.read_only,
+                    args,
+                    bundle.manifest().payload.inline
+                );
+                self.pending.insert(
+                    approval_id.clone(),
+                    Pending {
+                        frame,
+                        action_id,
+                        exec: exec.to_owned(),
+                        digest: digest.clone(),
+                        args_sha256,
+                        two_person: *two_person,
+                        created_ms: now_ms(),
+                    },
+                );
+                Ok(TaskOutcome::ApprovalRequired {
+                    approval_id,
+                    action_digest: digest,
+                    exec: exec.to_owned(),
+                    reason: reason.clone(),
+                    preview,
+                    two_person: *two_person,
+                })
+            }
+            PolicyDecision::Deny { .. } | PolicyDecision::NotAllowed { .. } => {
+                Ok(TaskOutcome::Denied {
+                    stage: "policy".to_owned(),
+                    reason: format!("{decision:?}"),
+                })
+            }
+        }
+    }
+
+    /// Audit + send a signed frame to the executor, then record the
+    /// outcome. Shared by the immediate-Allow path and `approve`.
+    async fn dispatch(
+        &mut self,
+        sid: archangel_core::SessionId,
+        action_id: archangel_core::ActionId,
+        exec: &str,
+        args_sha256: &str,
+        frame: Vec<u8>,
+    ) -> Result<TaskOutcome, OrchestratorError> {
         self.audit.append(AuditEvent::ExecRequested {
             session_id: sid,
             action_id,
             exec: exec.to_owned(),
-            args_sha256: sha256_hex(
-                &serde_json::to_vec(&args).unwrap_or_default(),
-            ),
+            args_sha256: args_sha256.to_owned(),
         })?;
-
         let resp = self.transport.send(frame).await?;
         self.record_outcome(sid, action_id, exec, resp)
+    }
+
+    /// Drop expired pending approvals (fail-closed: an expired approval is
+    /// simply gone).
+    fn prune_pending(&mut self) {
+        let cutoff = now_ms().saturating_sub(APPROVAL_TTL_MS);
+        self.pending.retain(|_, p| p.created_ms >= cutoff);
+    }
+
+    /// Approve a pending action: validate it exists, is unexpired, and the
+    /// echoed digest matches the exact stored action; then run it. Single-
+    /// use. Two-person (#14) is not satisfiable with a single operator
+    /// boundary-A key in this build, so such actions are refused
+    /// fail-closed (and the pending consumed) — documented limitation
+    /// until multi-operator ctl trust lands.
+    pub async fn approve(
+        &mut self,
+        approval_id: &str,
+        action_digest: &str,
+    ) -> Result<TaskOutcome, OrchestratorError> {
+        self.prune_pending();
+        let Some(p) = self.pending.remove(approval_id) else {
+            return Ok(TaskOutcome::Denied {
+                stage: "approval".to_owned(),
+                reason: "unknown or expired approval id".to_owned(),
+            });
+        };
+        if p.digest != action_digest {
+            return Ok(TaskOutcome::Denied {
+                stage: "approval".to_owned(),
+                reason: "digest mismatch: approval does not bind the \
+                         action that was presented"
+                    .to_owned(),
+            });
+        }
+        let sid = self.session.id();
+        if p.two_person {
+            self.audit.append(AuditEvent::Note {
+                message: format!(
+                    "two-person rule unsatisfied for {} (single operator \
+                     key); refused",
+                    p.exec
+                ),
+            })?;
+            return Ok(TaskOutcome::Denied {
+                stage: "two-person".to_owned(),
+                reason: "critical action needs two independent operator \
+                         approvals; multi-operator ctl trust is a later \
+                         milestone, so it stays blocked (fail-closed)"
+                    .to_owned(),
+            });
+        }
+        self.audit.append(AuditEvent::ApprovalGranted {
+            session_id: sid,
+            action_id: p.action_id,
+            approver: "operator".to_owned(),
+        })?;
+        self.dispatch(sid, p.action_id, &p.exec, &p.args_sha256, p.frame)
+            .await
+    }
+
+    /// Reject (discard) a pending action. It never runs.
+    pub fn reject(&mut self, approval_id: &str) -> TaskOutcome {
+        match self.pending.remove(approval_id) {
+            Some(p) => TaskOutcome::Denied {
+                stage: "rejected".to_owned(),
+                reason: format!("operator rejected {}", p.exec),
+            },
+            None => TaskOutcome::Denied {
+                stage: "approval".to_owned(),
+                reason: "unknown or expired approval id".to_owned(),
+            },
+        }
     }
 
     fn evaluate_policy(
@@ -444,7 +633,7 @@ pub fn open_audit<S: DurableSink>(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use std::{
         io::Cursor,
@@ -528,6 +717,29 @@ inline = "{payload}"
         std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("write exec");
         std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
             .expect("write sig");
+    }
+
+    fn write_bundle_risk(
+        dir: &Path,
+        name: &str,
+        read_only: bool,
+        payload: &str,
+        risk: &str,
+    ) {
+        let sha: [u8; 32] = Sha256::digest(payload.as_bytes()).into();
+        let manifest = format!(
+            "\n[meta]\nname = \"{name}\"\nversion = \"1.0.0\"\nrisk = \"{risk}\"\n\
+             read_only = {read_only}\n\n[args]\nservice = {{ type = \"string\", \
+             regex = \"[a-z]+\", required = true }}\n\n[sandbox]\n\
+             syscall_profile = \"inspect\"\nnetwork = \"none\"\n\
+             timeout_seconds = 5\n\n[payload]\ntype = \"bash\"\n\
+             sha256 = \"{}\"\ninline = \"{payload}\"\n",
+            hex(&sha)
+        );
+        let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
+        std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("exec");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
+            .expect("sig");
     }
 
     fn trust() -> OperatorTrust {
@@ -772,6 +984,188 @@ inline = "{payload}"
             "nothing may execute before approval"
         );
         assert!(audit.contains("require_approval"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Build an interactive-mode orchestrator over a bundle of `risk`.
+    fn interactive_orch<'b>(
+        reply: &str,
+        exec: &str,
+        risk: &str,
+        dir: &std::path::Path,
+        buf: &'b mut Vec<u8>,
+    ) -> Orchestrator<MockBackend, InProcess, &'b mut Vec<u8>> {
+        write_bundle_risk(dir, exec, true, "echo hi", risk);
+        let session = Session::new(OperationMode::Interactive, "ops");
+        let vk = session.verifying_key();
+        let pol = PolicyEngine::new(
+            Allowlist::from_toml(&format!(
+                "[[profile]]\nname=\"ops\"\nmode=\"interactive\"\nallowed_exec=[\"{exec}\"]\n"
+            ))
+            .expect("allowlist"),
+        );
+        let executor = Executor::new(
+            vk,
+            trust(),
+            pol.clone(),
+            dir.to_path_buf(),
+            ExecLimits::default(),
+            MockRunner,
+        );
+        let (log, _kp) = open_audit(buf).expect("audit");
+        Orchestrator::new(
+            MockBackend {
+                reply: reply.to_owned(),
+            },
+            InProcess {
+                executor: Mutex::new(executor),
+            },
+            pol,
+            trust(),
+            dir.to_path_buf(),
+            log,
+            session,
+            "mock-1",
+            256,
+            vec![ToolSpec {
+                name: exec.to_owned(),
+                description: "x".to_owned(),
+                read_only: true,
+            }],
+        )
+    }
+
+    fn pending_of(o: &TaskOutcome) -> (String, String) {
+        match o {
+            TaskOutcome::ApprovalRequired {
+                approval_id,
+                action_digest,
+                ..
+            } => (approval_id.clone(), action_digest.clone()),
+            other => panic!("expected ApprovalRequired, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn approve_runs_exactly_the_proposed_action() {
+        let dir = unique_dir();
+        let mut buf = Vec::new();
+        {
+            let mut o = interactive_orch(
+                r#"{"action":"read-logs","args":{"service":"nginx"},"reason":"x"}"#,
+                "read-logs",
+                "medium",
+                &dir,
+                &mut buf,
+            );
+            o.start().expect("start");
+            let p = o.run_task("inspect", &[]).await.expect("ok");
+            let (id, dig) = pending_of(&p);
+            let done = o.approve(&id, &dig).await.expect("approve");
+            assert!(
+                matches!(&done, TaskOutcome::Executed { stdout, .. } if stdout == "mock-ok"),
+                "approval must run the stashed signed action, got {done:?}"
+            );
+            // Single-use: a second approve of the same id is unknown now.
+            assert!(matches!(
+                o.approve(&id, &dig).await.expect("a2"),
+                TaskOutcome::Denied { .. }
+            ));
+        }
+        let audit = String::from_utf8(buf).expect("utf8");
+        assert!(audit.contains("approval_granted"));
+        assert!(audit.contains("exec_completed"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn approve_with_wrong_digest_is_refused_and_runs_nothing() {
+        let dir = unique_dir();
+        let mut buf = Vec::new();
+        {
+            let mut o = interactive_orch(
+                r#"{"action":"read-logs","args":{"service":"nginx"},"reason":"x"}"#,
+                "read-logs",
+                "medium",
+                &dir,
+                &mut buf,
+            );
+            o.start().expect("start");
+            let p = o.run_task("inspect", &[]).await.expect("ok");
+            let (id, _dig) = pending_of(&p);
+            let r = o.approve(&id, "deadbeef").await.expect("approve");
+            assert!(matches!(&r, TaskOutcome::Denied { stage, .. } if stage == "approval"));
+        }
+        let audit = String::from_utf8(buf).expect("utf8");
+        assert!(!audit.contains("exec_completed"), "digest mismatch must not run");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn reject_discards_and_then_approve_is_unknown() {
+        let dir = unique_dir();
+        let mut buf = Vec::new();
+        let mut o = interactive_orch(
+            r#"{"action":"read-logs","args":{"service":"nginx"},"reason":"x"}"#,
+            "read-logs",
+            "medium",
+            &dir,
+            &mut buf,
+        );
+        o.start().expect("start");
+        let p = o.run_task("inspect", &[]).await.expect("ok");
+        let (id, dig) = pending_of(&p);
+        assert!(matches!(
+            o.reject(&id),
+            TaskOutcome::Denied { .. }
+        ));
+        assert!(matches!(
+            o.approve(&id, &dig).await.expect("after reject"),
+            TaskOutcome::Denied { .. }
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn unknown_approval_id_is_denied() {
+        let dir = unique_dir();
+        let mut buf = Vec::new();
+        let mut o = interactive_orch("x", "read-logs", "low", &dir, &mut buf);
+        o.start().expect("start");
+        assert!(matches!(
+            o.approve("nope", "nope").await.expect("ok"),
+            TaskOutcome::Denied { .. }
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn critical_action_two_person_cannot_be_single_approved() {
+        let dir = unique_dir();
+        let mut buf = Vec::new();
+        {
+            let mut o = interactive_orch(
+                r#"{"action":"danger","args":{"service":"nginx"},"reason":"x"}"#,
+                "danger",
+                "critical",
+                &dir,
+                &mut buf,
+            );
+            o.start().expect("start");
+            let p = o.run_task("do it", &[]).await.expect("ok");
+            assert!(matches!(
+                &p,
+                TaskOutcome::ApprovalRequired { two_person: true, .. }
+            ));
+            let (id, dig) = pending_of(&p);
+            let r = o.approve(&id, &dig).await.expect("approve");
+            assert!(
+                matches!(&r, TaskOutcome::Denied { stage, .. } if stage == "two-person"),
+                "a single operator key cannot satisfy the two-person rule; got {r:?}"
+            );
+        }
+        let audit = String::from_utf8(buf).expect("utf8");
+        assert!(!audit.contains("exec_completed"), "critical must not run");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
