@@ -12,8 +12,42 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-[lints]
-workspace = true
+# This crate does NOT inherit `[workspace.lints]`. It is the one place the
+# project's strongest invariant is relaxed: `unsafe_code` is `deny` (not
+# `forbid`) so the single audited, CODEOWNERS-reviewed syscall-application
+# block can carry an explicit `#[allow(unsafe_code)]` + `// SAFETY:`. The
+# relaxation is written out here on purpose so it is visible and greppable
+# rather than hidden behind `workspace = true`. See docs/SANDBOX.md §3.
+# Every other lint mirrors `[workspace.lints]` exactly.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_must_use = "deny"
+unreachable_pub = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+mem_forget = "deny"
+indexing_slicing = "warn"
+integer_division = "warn"
+float_cmp = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
 
 [dependencies]
 archangel-core = { workspace = true }
