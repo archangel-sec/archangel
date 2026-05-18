@@ -159,7 +159,118 @@ inline = "{payload}"
                 max_output: 65536,
             },
             MockRunner,
+            None,
         )
+    }
+
+    /// Write a bundle that mutates persistent state (declares an rw path).
+    fn write_mutating_bundle(dir: &Path, name: &str) {
+        let payload = "echo mutate";
+        let sha: [u8; 32] = Sha256::digest(payload.as_bytes()).into();
+        let manifest = format!(
+            "\n[meta]\nname = \"{name}\"\nversion = \"1.0.0\"\nrisk = \"high\"\n\
+             read_only = false\nmutates_persistent_state = true\n\n[sandbox]\n\
+             syscall_profile = \"x\"\nnetwork = \"none\"\n\
+             allowed_paths_rw = [\"/data/app\"]\ntimeout_seconds = 10\n\n\
+             [payload]\ntype = \"bash\"\nsha256 = \"{}\"\ninline = \"{payload}\"\n",
+            hex(&sha)
+        );
+        let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
+        std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("exec");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
+            .expect("sig");
+    }
+
+    fn exec_with_snap(
+        dir: PathBuf,
+        snap: Option<Box<dyn archangel_snapshot::Snapshotter>>,
+    ) -> Executor<MockRunner> {
+        Executor::new(
+            session_key().verifying_key(),
+            trust(),
+            engine(&["mut"]),
+            dir,
+            ExecLimits {
+                timeout: Duration::from_secs(5),
+                max_output: 65536,
+            },
+            MockRunner,
+            snap,
+        )
+    }
+
+    fn minimal_request(exec: &str) -> ExecRequest {
+        ExecRequest {
+            session_id: SessionId::from_bytes([3u8; 16]),
+            action_id: ActionId::new(),
+            seq: 1,
+            nonce: [0u8; 16],
+            issued_ms: 1,
+            profile: "default".to_owned(),
+            mode: OperationMode::ReadOnly,
+            exec_name: exec.to_owned(),
+            args: BTreeMap::new(),
+            declared_risk: RiskLevel::High,
+            declared_read_only: false,
+        }
+    }
+
+    #[test]
+    fn snapshot_gate_fails_closed_without_a_backend() {
+        let dir = unique_dir();
+        write_mutating_bundle(&dir, "mut");
+        let ex = exec_with_snap(dir.clone(), None);
+        let b = archangel_exec_format::VerifiedBundle::load(
+            &dir.join("mut.exec"),
+            &dir.join("mut.exec.sig"),
+            &trust(),
+        )
+        .expect("verified");
+        let r = ex.snapshot_gate(&minimal_request("mut"), &b);
+        assert!(r.is_err(), "mutating action with no snapshot backend must be refused");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshot_gate_takes_a_recovery_point_when_backend_works() {
+        let dir = unique_dir();
+        write_mutating_bundle(&dir, "mut");
+        let ex = exec_with_snap(
+            dir.clone(),
+            Some(Box::new(archangel_snapshot::testutil::MockSnapshotter::working())),
+        );
+        let b = archangel_exec_format::VerifiedBundle::load(
+            &dir.join("mut.exec"),
+            &dir.join("mut.exec.sig"),
+            &trust(),
+        )
+        .expect("verified");
+        let id = ex
+            .snapshot_gate(&minimal_request("mut"), &b)
+            .expect("snapshot ok");
+        assert!(id.is_some(), "a recovery point id must be returned");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshot_gate_fails_closed_when_backend_errors() {
+        let dir = unique_dir();
+        write_mutating_bundle(&dir, "mut");
+        let ex = exec_with_snap(
+            dir.clone(),
+            Some(Box::new(archangel_snapshot::testutil::MockSnapshotter::failing())),
+        );
+        let b = archangel_exec_format::VerifiedBundle::load(
+            &dir.join("mut.exec"),
+            &dir.join("mut.exec.sig"),
+            &trust(),
+        )
+        .expect("verified");
+        assert!(
+            ex.snapshot_gate(&minimal_request("mut"), &b).is_err(),
+            "a failed snapshot must refuse the mutating action"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn request(exec_name: &str, seq: u64, args: BTreeMap<String, String>) -> ExecRequest {

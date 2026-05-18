@@ -54,6 +54,7 @@ archangel-config = { workspace = true }
 archangel-ipc = { workspace = true }
 archangel-policy = { workspace = true }
 archangel-exec-format = { workspace = true }
+archangel-snapshot = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
@@ -69,5 +70,6 @@ archangel-core = { workspace = true }
 archangel-ipc = { workspace = true }
 archangel-policy = { workspace = true }
 archangel-exec-format = { workspace = true }
+archangel-snapshot = { workspace = true, features = ["test-util"] }
 ed25519-dalek = { workspace = true }
 tokio = { workspace = true }

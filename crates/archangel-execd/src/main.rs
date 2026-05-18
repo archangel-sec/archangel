@@ -275,6 +275,22 @@ async fn main() -> anyhow::Result<()> {
         }),
     };
 
+    // #16: a BTRFS snapshot backend if the state dir is on BTRFS, else
+    // None (⇒ any mutating action is refused fail-closed by the executor).
+    let snap_root = std::path::Path::new("/var/lib/archangel-exec/snapshots");
+    let snapshotter = archangel_snapshot::detect_for(
+        std::path::Path::new("/var/lib/archangel-exec"),
+        snap_root.to_path_buf(),
+    );
+    if let Some(s) = &snapshotter {
+        info!(backend = s.backend(), "snapshot backend ready");
+    } else {
+        warn!(
+            "no snapshot backend (state dir not BTRFS): mutating actions \
+             will be refused fail-closed (read-only is unaffected)"
+        );
+    }
+
     let executor = Executor::new(
         initial_key,
         trust,
@@ -285,6 +301,7 @@ async fn main() -> anyhow::Result<()> {
             max_output: 1024 * 1024,
         },
         BashRunner,
+        snapshotter,
     );
 
     if s.socket.exists() {

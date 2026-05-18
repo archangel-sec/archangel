@@ -29,6 +29,7 @@ use archangel_core::ActionId;
 use archangel_exec_format::{OperatorTrust, VerifiedBundle};
 use archangel_ipc::{ExecOutcome, ExecRequest, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest};
+use archangel_snapshot::Snapshotter;
 
 use crate::{
     replay::ReplayGuard,
@@ -72,6 +73,9 @@ pub struct Executor<R: ActionRunner> {
     limits: ExecLimits,
     replay: ReplayGuard,
     runner: R,
+    /// Snapshot backend (#16). `None` ⇒ any `mutates_persistent_state`
+    /// action is refused fail-closed (no recovery point ⇒ no mutation).
+    snapshotter: Option<Box<dyn Snapshotter>>,
 }
 
 /// `exec_name` must be a single safe path component. Anything with a slash,
@@ -91,6 +95,7 @@ fn safe_exec_name(name: &str) -> bool {
 impl<R: ActionRunner> Executor<R> {
     /// Construct an executor.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_key: ed25519_dalek::VerifyingKey,
         trust: OperatorTrust,
@@ -98,6 +103,7 @@ impl<R: ActionRunner> Executor<R> {
         bundle_dir: PathBuf,
         limits: ExecLimits,
         runner: R,
+        snapshotter: Option<Box<dyn Snapshotter>>,
     ) -> Self {
         Self {
             session_key,
@@ -107,6 +113,7 @@ impl<R: ActionRunner> Executor<R> {
             limits,
             replay: ReplayGuard::new(),
             runner,
+            snapshotter,
         }
     }
 
@@ -138,7 +145,61 @@ impl<R: ActionRunner> Executor<R> {
         let bundle = self.resolve_bundle(&request)?;
         Self::check_args_and_read_only(&request, &bundle)?;
         self.policy_gate(&request, &bundle)?;
-        Ok(Self::execute(&self.runner, self.limits, &request, &bundle, action_id))
+        // #16: no mutation without a recovery point (fail-closed).
+        let snapshot_id = self.snapshot_gate(&request, &bundle)?;
+        Ok(Self::execute(
+            &self.runner,
+            self.limits,
+            &request,
+            &bundle,
+            action_id,
+            snapshot_id,
+        ))
+    }
+
+    /// Step 7.5 (#16): if the verified bundle mutates persistent state, a
+    /// recovery point MUST be created before it runs. No snapshot backend,
+    /// no declared rw paths, or a failed snapshot ⇒ refuse. Read-only /
+    /// non-mutating actions return `Ok(None)` and do nothing.
+    ///
+    /// (Currently shadowed by the read-only gate above; in place and
+    /// independently tested so it holds the instant mutation is enabled.)
+    pub(crate) fn snapshot_gate(
+        &self,
+        request: &ExecRequest,
+        bundle: &VerifiedBundle,
+    ) -> Gate<Option<String>> {
+        if !bundle.manifest().meta.mutates_persistent_state {
+            return Ok(None);
+        }
+        let reject = |reason: String| {
+            ExecResponse::rejected(
+                request.action_id,
+                RejectStage::SnapshotUnavailable,
+                reason,
+            )
+        };
+        let target = bundle
+            .manifest()
+            .sandbox
+            .allowed_paths_rw
+            .first()
+            .ok_or_else(|| {
+                reject(
+                    "mutating action declares no rw path to snapshot".to_owned(),
+                )
+            })?;
+        let snap = self.snapshotter.as_ref().ok_or_else(|| {
+            reject(
+                "action mutates persistent state but no snapshot backend \
+                 is available (no recovery point ⇒ refused)"
+                    .to_owned(),
+            )
+        })?;
+        match snap.snapshot(std::path::Path::new(target)) {
+            Ok(id) => Ok(Some(id.0)),
+            Err(e) => Err(reject(format!("snapshot failed: {e}"))),
+        }
     }
 
     /// Steps 1–2: decode the envelope, verify version + session signature.
@@ -280,6 +341,7 @@ impl<R: ActionRunner> Executor<R> {
         request: &ExecRequest,
         bundle: &VerifiedBundle,
         action_id: ActionId,
+        snapshot_id: Option<String>,
     ) -> ExecResponse {
         let script = &bundle.manifest().payload.inline;
         let result = runner.run(&RunContext {
@@ -296,6 +358,7 @@ impl<R: ActionRunner> Executor<R> {
                 stdout: result.stdout,
                 stderr: result.stderr,
                 output_truncated: result.truncated,
+                snapshot_id,
             },
         }
     }

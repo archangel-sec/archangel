@@ -68,6 +68,10 @@ pub enum RejectStage {
     ArgRejected,
     /// This milestone executes read-only bundles only; this one mutates.
     NotReadOnly,
+    /// The action mutates persistent state but no recovery point could be
+    /// taken (no snapshot backend, or the snapshot failed). Fail-closed:
+    /// no mutation without a recovery point (#16).
+    SnapshotUnavailable,
     /// The action process failed to spawn, timed out, or was killed.
     ExecFailure,
 }
@@ -88,6 +92,9 @@ pub enum ExecOutcome {
         stderr: String,
         /// Whether stdout/stderr was truncated at the size cap.
         output_truncated: bool,
+        /// Recovery point taken before a `mutates_persistent_state`
+        /// action (#16). `None` for read-only / non-mutating actions.
+        snapshot_id: Option<String>,
     },
     /// The request was refused before/at execution.
     Rejected {

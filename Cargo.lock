@@ -143,6 +143,7 @@ dependencies = [
  "archangel-exec-format",
  "archangel-ipc",
  "archangel-policy",
+ "archangel-snapshot",
  "clap",
  "ed25519-dalek",
  "sha2",
@@ -201,6 +202,14 @@ dependencies = [
  "nix",
  "seccompiler",
  "serde",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "archangel-snapshot"
+version = "0.0.0"
+dependencies = [
  "thiserror 1.0.69",
  "tracing",
 ]

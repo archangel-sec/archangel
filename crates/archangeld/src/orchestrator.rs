@@ -554,8 +554,19 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
                 duration_ms,
                 stdout,
                 stderr,
+                snapshot_id,
                 ..
             } => {
+                // #16: the executor took a recovery point before a
+                // mutating action — record it in the signed chain so the
+                // snapshot is attributable to this exact action.
+                if let Some(snap) = &snapshot_id {
+                    self.audit.append(AuditEvent::SnapshotTaken {
+                        session_id: sid,
+                        action_id,
+                        snapshot_id: snap.clone(),
+                    })?;
+                }
                 self.audit.append(AuditEvent::ExecCompleted {
                     session_id: sid,
                     action_id,
@@ -834,6 +845,7 @@ inline = "{payload}"
             dir.clone(),
             ExecLimits::default(),
             MockRunner,
+            None,
         );
         let (log, _kp) = open_audit(buf).expect("audit");
         Orchestrator::new(
@@ -943,6 +955,7 @@ inline = "{payload}"
                 dir.clone(),
                 ExecLimits::default(),
                 MockRunner,
+                None,
             );
             let (log, _kp) = open_audit(&mut buf).expect("audit");
             let mut orch = Orchestrator::new(
@@ -1011,6 +1024,7 @@ inline = "{payload}"
             dir.to_path_buf(),
             ExecLimits::default(),
             MockRunner,
+            None,
         );
         let (log, _kp) = open_audit(buf).expect("audit");
         Orchestrator::new(

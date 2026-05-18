@@ -125,6 +125,7 @@ mod tests {
                     stdout: "socket-ok".to_owned(),
                     stderr: String::new(),
                     output_truncated: false,
+                    snapshot_id: None,
                 },
             };
             let frame = response_to_frame(&resp).expect("frame");
