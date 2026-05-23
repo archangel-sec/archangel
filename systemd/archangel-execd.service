@@ -64,6 +64,11 @@ SystemCallArchitectures=native
 LimitNOFILE=8192
 LimitNPROC=1024
 TasksMax=512
+# Delegate a cgroup v2 subtree (with cpu + memory controllers) so the executor
+# can create a per-action child cgroup and write cpu.max/memory.max for bundles
+# that declare resource ceilings (#11/#12). Without this, such a bundle is
+# refused fail-closed rather than run unbounded.
+Delegate=cpu memory pids
 
 # --- Logging ----------------------------------------------------------------
 StandardOutput=journal

@@ -44,6 +44,10 @@ pub struct RunContext<'a> {
     /// real executor always supplies one (the pipeline fails closed if a
     /// plan cannot be built); test runners pass `None`.
     pub sandbox: Option<&'a archangel_sandbox::SandboxPlan>,
+    /// The per-action cgroup the child is moved into right after spawn, when
+    /// the bundle declared cpu/memory ceilings (#11/#12). `None` ⇒ no
+    /// declared limits (or a test runner).
+    pub cgroup: Option<&'a archangel_sandbox::Cgroup>,
 }
 
 /// The result of a run.
@@ -137,6 +141,23 @@ impl ActionRunner for BashRunner {
             }
         };
 
+        // #11/#12: move the freshly-spawned child into its resource cgroup.
+        // If we created a cgroup for declared limits but cannot enrol the
+        // process, fail closed — kill it rather than let it run unbounded.
+        if let Some(cg) = ctx.cgroup {
+            if let Err(e) = cg.add_pid(child.id()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return RunResult {
+                    exit_code: -1,
+                    duration_ms: dur_ms(started),
+                    stdout: String::new(),
+                    stderr: format!("cgroup enrolment failed: {e}"),
+                    truncated: false,
+                };
+            }
+        }
+
         let cap = ctx.max_output;
         let out_pipe = child.stdout.take();
         let err_pipe = child.stderr.take();
@@ -200,6 +221,7 @@ mod tests {
             timeout: Duration::from_secs(secs),
             max_output: 64 * 1024,
             sandbox: None,
+            cgroup: None,
         }
     }
 
@@ -249,6 +271,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             max_output: 1024,
             sandbox: None,
+            cgroup: None,
         };
         let r = BashRunner.run(&rc);
         assert!(r.truncated);

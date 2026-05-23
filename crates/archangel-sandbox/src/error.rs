@@ -34,6 +34,13 @@ pub enum SandboxError {
     #[error("seccomp compilation failed: {0}")]
     SeccompCompile(String),
 
+    /// A declared cgroup limit could not be enforced: the cgroup tree was not
+    /// locatable, not delegated, or the controller files could not be
+    /// written. Fail-closed — a bundle that asked for a resource ceiling we
+    /// cannot apply is refused, never run unbounded.
+    #[error("cgroup enforcement failed: {0}")]
+    CgroupFailed(String),
+
     /// The sandbox is not available on this platform/build (non-Linux). The
     /// caller must refuse the action — there is no isolation to apply.
     #[error("sandbox unsupported on this platform")]

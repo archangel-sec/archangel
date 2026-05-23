@@ -47,6 +47,8 @@ mod plan;
 mod seccomp;
 
 #[cfg(target_os = "linux")]
+pub use cgroup::Cgroup;
+#[cfg(target_os = "linux")]
 pub use plan::{NetworkMode, SandboxPlan, SandboxPolicy};
 
 /// Non-Linux stub. The sandbox is Linux-only; on other platforms the crate

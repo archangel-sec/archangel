@@ -29,7 +29,7 @@ use archangel_core::ActionId;
 use archangel_exec_format::{NetworkPolicy, OperatorTrust, VerifiedBundle};
 use archangel_ipc::{ExecOutcome, ExecRequest, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest};
-use archangel_sandbox::{NetworkMode, SandboxPlan, SandboxPolicy};
+use archangel_sandbox::{Cgroup, NetworkMode, SandboxPlan, SandboxPolicy};
 use archangel_snapshot::Snapshotter;
 
 use crate::{
@@ -151,6 +151,11 @@ impl<R: ActionRunner> Executor<R> {
         // #11: build the enforceable sandbox from the verified manifest.
         // No plan ⇒ no run (fail-closed).
         let plan = Self::sandbox_gate(&request, &bundle)?;
+        // #11/#12: if the bundle declared cpu/memory ceilings, create the
+        // per-action cgroup now. Declared-but-unenforceable ⇒ refuse
+        // (fail-closed); no limits ⇒ `None` and no cgroup work. The guard
+        // lives until `execute` returns, then drops (removes the cgroup).
+        let cgroup = Self::cgroup_gate(&request, &plan)?;
         Ok(Self::execute(
             &self.runner,
             self.limits,
@@ -159,7 +164,24 @@ impl<R: ActionRunner> Executor<R> {
             action_id,
             snapshot_id,
             &plan,
+            cgroup.as_ref(),
         ))
+    }
+
+    /// Step 7.7 (#11/#12): create the per-action cgroup for the declared
+    /// resource ceilings. Returns `Ok(None)` when the bundle declares no
+    /// limits. A declared limit that cannot be enforced (no delegated v2
+    /// cgroup, controllers unavailable) is a rejection, never an unbounded
+    /// run.
+    fn cgroup_gate(request: &ExecRequest, plan: &SandboxPlan) -> Gate<Option<Cgroup>> {
+        let name = format!("archangel-{}", request.action_id);
+        Cgroup::create_for_self(&name, plan.cpu_max(), plan.memory_max()).map_err(|e| {
+            ExecResponse::rejected(
+                request.action_id,
+                RejectStage::SandboxRejected,
+                format!("cgroup limit not enforceable: {e}"),
+            )
+        })
     }
 
     /// Step 7.6 (#11): translate the *verified* bundle's `[sandbox]`
@@ -368,6 +390,7 @@ impl<R: ActionRunner> Executor<R> {
 
     /// Step 8: run the action under the layer-#11 sandbox and shape the
     /// response.
+    #[allow(clippy::too_many_arguments)]
     fn execute(
         runner: &R,
         limits: ExecLimits,
@@ -376,6 +399,7 @@ impl<R: ActionRunner> Executor<R> {
         action_id: ActionId,
         snapshot_id: Option<String>,
         plan: &SandboxPlan,
+        cgroup: Option<&Cgroup>,
     ) -> ExecResponse {
         let script = &bundle.manifest().payload.inline;
         let result = runner.run(&RunContext {
@@ -384,6 +408,7 @@ impl<R: ActionRunner> Executor<R> {
             timeout: limits.timeout,
             max_output: limits.max_output,
             sandbox: Some(plan),
+            cgroup,
         });
         ExecResponse {
             action_id,

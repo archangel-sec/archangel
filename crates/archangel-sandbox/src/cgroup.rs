@@ -1,10 +1,23 @@
-//! cgroup v2 resource-limit parsing.
+//! cgroup v2 resource-limit parsing **and** application.
 //!
-//! Bundle-declared `cpu_max` / `memory_max` strings are parsed here into the
-//! exact bytes the kernel expects in `cpu.max` / `memory.max`. Parsing is
-//! strict and total: a malformed, zero, negative, overflowing, or
-//! out-of-range value is [`SandboxError::InvalidLimit`] — it is **never**
-//! interpreted as "unlimited". A bundle cannot escape its cage with a typo.
+//! [`CpuMax`] / [`MemoryMax`] parse bundle-declared `cpu_max` / `memory_max`
+//! strings into the exact bytes the kernel expects in `cpu.max` /
+//! `memory.max`. Parsing is strict and total: a malformed, zero, negative,
+//! overflowing, or out-of-range value is [`SandboxError::InvalidLimit`] — it
+//! is **never** interpreted as "unlimited". A bundle cannot escape its cage
+//! with a typo.
+//!
+//! [`Cgroup`] then *applies* a parsed limit: it creates a per-action child
+//! cgroup under the executor's own cgroup, writes the controller files, and
+//! (the caller) moves the action process into it. This half is fail-closed
+//! too — a declared limit that cannot be written is [`SandboxError::CgroupFailed`],
+//! never silently dropped — but it only runs when a bundle actually declares
+//! a limit; bundles with none do no cgroup work at all.
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::SandboxError;
 
@@ -140,6 +153,134 @@ impl MemoryMax {
     }
 }
 
+/// Where the unified cgroup v2 hierarchy is mounted.
+const CGROUP_V2_MOUNT: &str = "/sys/fs/cgroup";
+
+/// Parse the v2 cgroup path of the calling process from the contents of
+/// `/proc/self/cgroup`. The unified hierarchy is the single line beginning
+/// `0::`; its value is an absolute path *within* the hierarchy (e.g.
+/// `/system.slice/archangel-execd.service`). Returns `None` if there is no
+/// v2 line (e.g. a pure cgroup-v1 host) — the caller then fails closed.
+fn parse_self_cgroup_v2(proc_content: &str) -> Option<String> {
+    proc_content.lines().find_map(|line| {
+        // Format: `hierarchy-ID:controllers:path`; v2 is `0::<path>`.
+        let rest = line.strip_prefix("0::")?;
+        if rest.starts_with('/') {
+            Some(rest.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
+/// A per-action cgroup v2 directory holding the action's resource limits.
+///
+/// Created as a child of the executor's own cgroup so it inherits the
+/// controllers systemd delegated (`Delegate=yes`). Dropping it removes the
+/// directory (best effort); the kernel only allows that once the cgroup is
+/// empty, i.e. after the action process has exited.
+#[derive(Debug)]
+pub struct Cgroup {
+    path: PathBuf,
+}
+
+/// A child cgroup directory name must be a single safe component.
+fn safe_component(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.contains('/')
+        && !name.contains('\0')
+        && name != "."
+        && name != ".."
+}
+
+impl Cgroup {
+    /// Create a per-action cgroup named `name` under the executor's own v2
+    /// cgroup and write the declared limits. Returns `Ok(None)` when neither
+    /// limit is set (nothing to enforce ⇒ no cgroup work).
+    ///
+    /// # Errors
+    /// [`SandboxError::CgroupFailed`] if the v2 hierarchy cannot be located
+    /// or the cgroup/controller files cannot be created or written.
+    /// Fail-closed: a declared limit that cannot be applied refuses the
+    /// action rather than running it unbounded.
+    pub fn create_for_self(
+        name: &str,
+        cpu: Option<CpuMax>,
+        memory: Option<MemoryMax>,
+    ) -> Result<Option<Self>, SandboxError> {
+        if cpu.is_none() && memory.is_none() {
+            return Ok(None);
+        }
+        let proc = fs::read_to_string("/proc/self/cgroup")
+            .map_err(|e| SandboxError::CgroupFailed(format!("read /proc/self/cgroup: {e}")))?;
+        let rel = parse_self_cgroup_v2(&proc).ok_or_else(|| {
+            SandboxError::CgroupFailed(
+                "no cgroup v2 (unified) hierarchy for this process".to_owned(),
+            )
+        })?;
+        // `rel` is absolute within the hierarchy; strip the leading `/` so it
+        // joins under the mount point.
+        let root = Path::new(CGROUP_V2_MOUNT).join(rel.trim_start_matches('/'));
+        Self::create_under(&root, name, cpu, memory).map(Some)
+    }
+
+    /// Lower-level: create `name` under an explicit `parent` cgroup dir and
+    /// write the limits. Factored out so the file behaviour is unit-tested
+    /// against a temporary directory without a real cgroup mount.
+    fn create_under(
+        parent: &Path,
+        name: &str,
+        cpu: Option<CpuMax>,
+        memory: Option<MemoryMax>,
+    ) -> Result<Self, SandboxError> {
+        if !safe_component(name) {
+            return Err(SandboxError::CgroupFailed(format!(
+                "unsafe cgroup name {name:?}"
+            )));
+        }
+        let path = parent.join(name);
+        fs::create_dir(&path)
+            .map_err(|e| SandboxError::CgroupFailed(format!("create {}: {e}", path.display())))?;
+        let cg = Self { path };
+        // From here on, any failure cleans up via `cg`'s Drop.
+        if let Some(c) = cpu {
+            cg.write_file("cpu.max", &c.cgroup_value())?;
+        }
+        if let Some(m) = memory {
+            cg.write_file("memory.max", &m.cgroup_value())?;
+        }
+        Ok(cg)
+    }
+
+    fn write_file(&self, file: &str, value: &str) -> Result<(), SandboxError> {
+        let target = self.path.join(file);
+        fs::write(&target, value)
+            .map_err(|e| SandboxError::CgroupFailed(format!("write {}: {e}", target.display())))
+    }
+
+    /// Move a process into this cgroup (so its resource usage is bounded).
+    ///
+    /// # Errors
+    /// [`SandboxError::CgroupFailed`] if `cgroup.procs` cannot be written.
+    pub fn add_pid(&self, pid: u32) -> Result<(), SandboxError> {
+        self.write_file("cgroup.procs", &pid.to_string())
+    }
+
+    /// The cgroup directory path (diagnostics / tests).
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for Cgroup {
+    fn drop(&mut self) {
+        // Best effort: only succeeds once the cgroup is empty (process gone).
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod tests {
@@ -217,5 +358,120 @@ mod tests {
         assert!(is_invalid(MemoryMax::parse(&over)));
         // Exactly at the ceiling is allowed.
         assert!(MemoryMax::parse(&MAX_MEMORY_BYTES.to_string()).is_ok());
+    }
+
+    // --- cgroup application (file behaviour, against a temp dir) ---
+
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU32, Ordering},
+    };
+
+    use super::{parse_self_cgroup_v2, safe_component, Cgroup};
+
+    fn tmp_dir() -> PathBuf {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let p = std::env::temp_dir().join(format!(
+            "archangel-cg-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&p).expect("temp parent");
+        p
+    }
+
+    #[test]
+    fn parses_unified_cgroup_line() {
+        let content = "0::/system.slice/archangel-execd.service\n";
+        assert_eq!(
+            parse_self_cgroup_v2(content).as_deref(),
+            Some("/system.slice/archangel-execd.service")
+        );
+    }
+
+    #[test]
+    fn ignores_v1_only_content() {
+        // A pure cgroup-v1 host has no `0::` line ⇒ None ⇒ caller fails closed.
+        let content = "12:pids:/\n4:memory:/user.slice\n1:cpu:/\n";
+        assert_eq!(parse_self_cgroup_v2(content), None);
+    }
+
+    #[test]
+    fn picks_v2_line_among_v1_lines() {
+        let content = "5:cpu:/legacy\n0::/the/unified/path\n3:pids:/x\n";
+        assert_eq!(
+            parse_self_cgroup_v2(content).as_deref(),
+            Some("/the/unified/path")
+        );
+    }
+
+    #[test]
+    fn no_limits_creates_no_cgroup() {
+        let r = Cgroup::create_for_self("action-x", None, None).expect("no-op must succeed");
+        assert!(r.is_none(), "no declared limits ⇒ no cgroup created");
+    }
+
+    #[test]
+    fn writes_controller_files_and_moves_pid() {
+        let parent = tmp_dir();
+        let cpu = CpuMax::parse("10%").unwrap();
+        let mem = MemoryMax::parse("128M").unwrap();
+        let cg =
+            Cgroup::create_under(&parent, "action-1", Some(cpu), Some(mem)).expect("create cgroup");
+
+        assert_eq!(
+            fs::read_to_string(cg.path().join("cpu.max")).unwrap(),
+            "10000 100000"
+        );
+        assert_eq!(
+            fs::read_to_string(cg.path().join("memory.max")).unwrap(),
+            (128 * 1024 * 1024).to_string()
+        );
+
+        cg.add_pid(4242).expect("write cgroup.procs");
+        assert_eq!(
+            fs::read_to_string(cg.path().join("cgroup.procs")).unwrap(),
+            "4242"
+        );
+        let path = cg.path().to_path_buf();
+        drop(cg);
+        // Our temp `cgroup.procs`/`*.max` are plain files (not the kernel's
+        // magic empties-on-exit ones), so the dir isn't empty and the
+        // best-effort rmdir is a no-op here — that's fine; on a real cgroup
+        // the kernel removes the control files once the procs list empties.
+        assert!(path.exists());
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn only_cpu_writes_only_cpu_max() {
+        let parent = tmp_dir();
+        let cpu = CpuMax::parse("50%").unwrap();
+        let cg = Cgroup::create_under(&parent, "action-2", Some(cpu), None).expect("create");
+        assert!(cg.path().join("cpu.max").exists());
+        assert!(!cg.path().join("memory.max").exists());
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn unsafe_name_is_refused() {
+        let parent = tmp_dir();
+        let cpu = CpuMax::parse("10%").unwrap();
+        for bad in ["../escape", "a/b", "", "."] {
+            assert!(matches!(
+                Cgroup::create_under(&parent, bad, Some(cpu), None),
+                Err(SandboxError::CgroupFailed(_))
+            ));
+        }
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn safe_component_accepts_action_names() {
+        assert!(safe_component("action-deadbeef"));
+        assert!(!safe_component("a/b"));
+        assert!(!safe_component(".."));
+        assert!(!safe_component(""));
     }
 }
