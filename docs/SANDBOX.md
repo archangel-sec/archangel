@@ -1,9 +1,11 @@
 # Archangel — Per-action sandbox (threat-model layer #11)
 
-> Status: **v0.2, partial.** The no-`unsafe`, fully-tested *plan* core is
-> implemented in `archangel-sandbox`. The single audited syscall-application
-> step is staged behind it and wired into `archangel-execd` in a following
-> unit. This document is normative: it is the contract that step must meet.
+> Status: **v0.2, enforced.** The no-`unsafe` *plan* core, the single audited
+> `pre_exec` applier (`no_new_privs` + seccomp), and the `archangel-execd`
+> wiring are all implemented and tested: every executed action is hardened,
+> and the executor refuses any action whose plan cannot be built. Namespace
+> unshare, mount binding and parent-side cgroup attach remain the next
+> refinement (§5). This document is normative.
 
 ## 1. What this layer contains
 
@@ -90,16 +92,36 @@ safe code; `unsafe` is reduced to a mechanical, audited application step.**
   executor) → validated `SandboxPlan` aggregating all of the above plus the
   namespace/network decision. Building the plan performs every fail-closed
   check in §2.
+- `apply`: the single audited `unsafe` site (`Command::pre_exec`). In the
+  forked child, just before `execve`, it latches `no_new_privs` and installs
+  the compiled seccomp filter — two syscalls, no allocation on the success
+  path. `archangel-execd` builds a plan from every verified bundle and
+  refuses the action (`RejectStage::SandboxRejected`) if it cannot; the
+  `BashRunner` then arms the child with it. Read-only actions are hardened
+  too (defense in depth).
+
+### Network: address-family restriction (not a blanket socket ban)
+
+`socket(2)` is allowed **only** for `AF_UNIX` and `AF_NETLINK` (argument-
+conditioned seccomp rules); every other family — notably `AF_INET` /
+`AF_INET6` — hits the kill-on-mismatch default. This is the same posture as
+systemd's `RestrictAddressFamilies=AF_UNIX AF_NETLINK`: a network socket can
+never be *created*, so the connection-oriented ops (`connect`, `sendmsg`, …),
+though permitted for the local-IPC fds glibc NSS needs, can never act on an
+internet socket. Local user/group resolution (`getpwuid` via `nss_systemd`)
+and interface enumeration (`__check_pf`) keep working; network egress stays
+structurally impossible at the syscall layer (and #17 adds the kernel egress
+filter on top).
 
 ## 5. What is deferred (next unit)
 
-- The single `unsafe` `pre_exec` applier and its `// SAFETY:` block.
-- Wiring the plan into `archangel-execd`'s runner (the executor builds a
-  `SandboxPlan` from the verified manifest and refuses the action if it cannot).
 - Enabling mutation: the executor's read-only invariant is only relaxed once
   **both** #11 (this) and #16 (snapshots, done) are enforced on the path.
-- Mount-namespace path binding (`allowed_paths_ro` / `allowed_paths_rw`) and
-  the user-namespace uid/gid map are scoped with the applier, not before it.
+- Mount-namespace path binding (`allowed_paths_ro` / `allowed_paths_rw`), the
+  namespace `unshare` set, the user-namespace uid/gid map, and parent-side
+  cgroup attach (`cpu.max` / `memory.max` are already parsed and validated by
+  `plan`, just not yet written). The enforced syscall surface already denies
+  the escape vectors these would also block.
 
 Non-Linux targets compile `archangel-sandbox` as an explicit no-op stub so the
 workspace still checks on a developer laptop; the stub can never be used to

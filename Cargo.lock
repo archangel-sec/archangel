@@ -143,6 +143,7 @@ dependencies = [
  "archangel-exec-format",
  "archangel-ipc",
  "archangel-policy",
+ "archangel-sandbox",
  "archangel-snapshot",
  "clap",
  "ed25519-dalek",

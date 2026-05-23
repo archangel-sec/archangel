@@ -72,6 +72,10 @@ pub enum RejectStage {
     /// taken (no snapshot backend, or the snapshot failed). Fail-closed:
     /// no mutation without a recovery point (#16).
     SnapshotUnavailable,
+    /// The verified bundle's `[sandbox]` profile could not be turned into an
+    /// enforceable sandbox (unknown seccomp profile / capability, invalid
+    /// resource limit, bad path). Fail-closed (#11): no sandbox, no run.
+    SandboxRejected,
     /// The action process failed to spawn, timed out, or was killed.
     ExecFailure,
 }

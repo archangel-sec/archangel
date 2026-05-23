@@ -26,9 +26,10 @@
 use std::{path::PathBuf, time::Duration};
 
 use archangel_core::ActionId;
-use archangel_exec_format::{OperatorTrust, VerifiedBundle};
+use archangel_exec_format::{NetworkPolicy, OperatorTrust, VerifiedBundle};
 use archangel_ipc::{ExecOutcome, ExecRequest, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest};
+use archangel_sandbox::{NetworkMode, SandboxPlan, SandboxPolicy};
 use archangel_snapshot::Snapshotter;
 
 use crate::{
@@ -147,6 +148,9 @@ impl<R: ActionRunner> Executor<R> {
         self.policy_gate(&request, &bundle)?;
         // #16: no mutation without a recovery point (fail-closed).
         let snapshot_id = self.snapshot_gate(&request, &bundle)?;
+        // #11: build the enforceable sandbox from the verified manifest.
+        // No plan ⇒ no run (fail-closed).
+        let plan = Self::sandbox_gate(&request, &bundle)?;
         Ok(Self::execute(
             &self.runner,
             self.limits,
@@ -154,7 +158,53 @@ impl<R: ActionRunner> Executor<R> {
             &bundle,
             action_id,
             snapshot_id,
+            &plan,
         ))
+    }
+
+    /// Step 7.6 (#11): translate the *verified* bundle's `[sandbox]`
+    /// section into an enforceable [`SandboxPlan`]. Every fail-closed
+    /// check (unknown seccomp profile / capability, invalid limit, bad
+    /// path) lives in `archangel-sandbox`; here we only map the manifest
+    /// types and convert any error into a rejection. A bundle that cannot
+    /// produce a plan never runs.
+    fn sandbox_gate(
+        request: &ExecRequest,
+        bundle: &VerifiedBundle,
+    ) -> Gate<SandboxPlan> {
+        let reject = |msg: String| {
+            ExecResponse::rejected(
+                request.action_id,
+                RejectStage::SandboxRejected,
+                msg,
+            )
+        };
+        let s = &bundle.manifest().sandbox;
+        // `NetworkPolicy` is `#[non_exhaustive]`: an unrecognized future
+        // variant is refused, never silently downgraded to a safer-looking
+        // mode (fail-closed).
+        let network = match s.network {
+            NetworkPolicy::None => NetworkMode::None,
+            NetworkPolicy::Loopback => NetworkMode::Loopback,
+            NetworkPolicy::Egress => NetworkMode::Egress,
+            other => {
+                return Err(reject(format!(
+                    "unsupported network policy {other:?}"
+                )))
+            }
+        };
+        let policy = SandboxPolicy {
+            syscall_profile: s.syscall_profile.clone(),
+            capabilities: s.capabilities.clone(),
+            allowed_paths_ro: s.allowed_paths_ro.clone(),
+            allowed_paths_rw: s.allowed_paths_rw.clone(),
+            network,
+            cpu_max: s.cpu_max.clone(),
+            memory_max: s.memory_max.clone(),
+        };
+        policy
+            .plan()
+            .map_err(|e| reject(format!("sandbox plan refused: {e}")))
     }
 
     /// Step 7.5 (#16): if the verified bundle mutates persistent state, a
@@ -334,7 +384,8 @@ impl<R: ActionRunner> Executor<R> {
         }
     }
 
-    /// Step 8: run in the minimal sandbox and shape the response.
+    /// Step 8: run the action under the layer-#11 sandbox and shape the
+    /// response.
     fn execute(
         runner: &R,
         limits: ExecLimits,
@@ -342,6 +393,7 @@ impl<R: ActionRunner> Executor<R> {
         bundle: &VerifiedBundle,
         action_id: ActionId,
         snapshot_id: Option<String>,
+        plan: &SandboxPlan,
     ) -> ExecResponse {
         let script = &bundle.manifest().payload.inline;
         let result = runner.run(&RunContext {
@@ -349,6 +401,7 @@ impl<R: ActionRunner> Executor<R> {
             args: &request.args,
             timeout: limits.timeout,
             max_output: limits.max_output,
+            sandbox: Some(plan),
         });
         ExecResponse {
             action_id,

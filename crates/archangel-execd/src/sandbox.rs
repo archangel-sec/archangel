@@ -1,23 +1,27 @@
-//! Minimal v0.1 process sandbox.
+//! The action process runner.
 //!
-//! # Honest scope
+//! # Scope
 //!
-//! This is **NOT** the real isolation layer. Threat model layer #11
-//! (namespaces + seccomp-bpf + capabilities + cgroups v2) lands in v0.2 as
-//! the `archangel-sandbox` crate. What this provides is process-level
-//! hardening only:
+//! Two complementary layers harden every executed action:
 //!
-//! - a clean environment (no inherited env; minimal `PATH`, scoped `HOME`),
-//! - no stdin,
-//! - a fresh working directory,
-//! - a hard wall-clock timeout (a hung action is killed, never wedges the
-//!   executor),
-//! - stdout/stderr captured under a byte cap (a chatty/hostile action
-//!   cannot exhaust executor memory).
+//! 1. **Kernel isolation (layer #11)** — when a [`RunContext`] carries a
+//!    [`archangel_sandbox::SandboxPlan`], the child latches `no_new_privs`
+//!    and installs the plan's seccomp-bpf filter just before `execve`
+//!    (the project's sole audited `unsafe`, in `archangel-sandbox`). A
+//!    syscall outside the profile's allowlist *kills the process*; network,
+//!    mount, ptrace, module-load, privilege-change and fs-mutation syscalls
+//!    are absent and therefore fatal. The executor refuses any action whose
+//!    plan cannot be built (fail-closed — see [`crate::handler`]).
+//! 2. **Process hygiene** — a clean environment (no inherited env; minimal
+//!    `PATH`, scoped `HOME`), no stdin, a hard wall-clock timeout (a hung
+//!    action is killed, never wedges the executor), and stdout/stderr
+//!    captured under a byte cap (a chatty/hostile action cannot exhaust
+//!    executor memory).
 //!
-//! Because v0.1 only ever runs `read_only = true` bundles, the blast radius
-//! of this weaker sandbox is bounded by construction. We state the limit
-//! plainly rather than imply isolation we do not yet have.
+//! Namespace unshare, the user-namespace uid map, mount binding and
+//! parent-side cgroup attach are the next `archangel-sandbox` refinement
+//! (see `docs/SANDBOX.md` §5); the enforced syscall surface already denies
+//! the escape vectors they would also block.
 
 use std::{
     collections::BTreeMap,
@@ -36,6 +40,10 @@ pub struct RunContext<'a> {
     pub timeout: Duration,
     /// Per-stream output cap in bytes.
     pub max_output: usize,
+    /// The validated layer-#11 sandbox plan to enforce on the child. The
+    /// real executor always supplies one (the pipeline fails closed if a
+    /// plan cannot be built); test runners pass `None`.
+    pub sandbox: Option<&'a archangel_sandbox::SandboxPlan>,
 }
 
 /// The result of a run.
@@ -106,6 +114,14 @@ impl ActionRunner for BashRunner {
             .env("LC_ALL", "C");
         for (k, v) in ctx.args {
             cmd.env(format!("ARG_{k}"), v);
+        }
+
+        // Layer #11: arm the kernel sandbox so it is installed in the child
+        // immediately before `execve`. A forbidden syscall then kills the
+        // process. Absent a plan (test runners only) the child is not
+        // hardened — the real pipeline always supplies one or refuses.
+        if let Some(plan) = ctx.sandbox {
+            plan.harden(&mut cmd);
         }
 
         let mut child = match cmd.spawn() {
@@ -191,6 +207,7 @@ mod tests {
             args,
             timeout: Duration::from_secs(secs),
             max_output: 64 * 1024,
+            sandbox: None,
         }
     }
 
@@ -239,6 +256,7 @@ mod tests {
             args: &args,
             timeout: Duration::from_secs(5),
             max_output: 1024,
+            sandbox: None,
         };
         let r = BashRunner.run(&rc);
         assert!(r.truncated);

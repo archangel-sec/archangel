@@ -36,6 +36,8 @@ mod error;
 pub use error::SandboxError;
 
 #[cfg(target_os = "linux")]
+mod apply;
+#[cfg(target_os = "linux")]
 mod capability;
 #[cfg(target_os = "linux")]
 mod cgroup;

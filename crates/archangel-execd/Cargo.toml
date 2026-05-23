@@ -45,9 +45,10 @@ assets = [
 # Trust tier T2 — the only component that mutates the system. The
 # dependency surface is kept deliberately minimal: every crate here is in
 # the executor's TCB and a target for external audit. archangel-sandbox
-# (v0.2 isolation) and archangel-audit (archangeld is what writes the log,
-# architecture step 13) are intentionally NOT dependencies yet — they are
-# added when the milestone that needs them lands, not before.
+# (the layer-#11 isolation crate, which carries the project's sole audited
+# `unsafe`) is now a dependency: every executed action is hardened by it.
+# archangel-audit stays out (archangeld writes the log, architecture
+# step 13) — added only when the milestone that needs it lands.
 [dependencies]
 archangel-core = { workspace = true }
 archangel-config = { workspace = true }
@@ -55,6 +56,7 @@ archangel-ipc = { workspace = true }
 archangel-policy = { workspace = true }
 archangel-exec-format = { workspace = true }
 archangel-snapshot = { workspace = true }
+archangel-sandbox = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }

@@ -13,8 +13,13 @@
 //! other Linux arch is a hard build error rather than a silently
 //! under-specified — and thus potentially over-permissive — filter.
 
+use std::collections::BTreeMap;
+
 use nix::libc;
-use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, TargetArch};
+use seccompiler::{
+    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
+    SeccompFilter, SeccompRule, TargetArch,
+};
 
 use crate::SandboxError;
 
@@ -100,6 +105,29 @@ fn common_allow() -> Vec<i64> {
         n(libc::SYS_getgroups),
         n(libc::SYS_getpgid),
         n(libc::SYS_getsid),
+        // bash pipeline/job-control sets the process group of the children
+        // it forks; benign inside the sandbox (only own/child pgrp/session).
+        n(libc::SYS_setpgid),
+        n(libc::SYS_setsid),
+        // Local-IPC socket *operations*. These are inert for networking:
+        // `socket(2)` itself is allowed ONLY for AF_UNIX / AF_NETLINK (see
+        // `socket_rules`), so an AF_INET/AF_INET6 socket can never be
+        // created — and these ops therefore can never act on one. This is
+        // the same posture as systemd's `RestrictAddressFamilies=AF_UNIX
+        // AF_NETLINK`: restrict at creation, allow the ops. Needed by glibc
+        // NSS (`getpwuid` via nss_systemd over an AF_UNIX socket) and
+        // interface enumeration (`__check_pf` over AF_NETLINK).
+        n(libc::SYS_connect),
+        n(libc::SYS_bind),
+        n(libc::SYS_socketpair),
+        n(libc::SYS_sendto),
+        n(libc::SYS_recvfrom),
+        n(libc::SYS_sendmsg),
+        n(libc::SYS_recvmsg),
+        n(libc::SYS_getsockopt),
+        n(libc::SYS_setsockopt),
+        n(libc::SYS_getpeername),
+        n(libc::SYS_getsockname),
         // --- thread/runtime setup ---
         n(libc::SYS_set_tid_address),
         n(libc::SYS_set_robust_list),
@@ -121,16 +149,22 @@ fn common_allow() -> Vec<i64> {
         n(libc::SYS_execve),
         n(libc::SYS_execveat),
         n(libc::SYS_wait4),
+        n(libc::SYS_waitid),
         n(libc::SYS_exit),
         n(libc::SYS_exit_group),
         n(libc::SYS_tgkill),
         n(libc::SYS_kill), // bash job control over its own children
-        // --- misc read-only system info ---
+        // --- read-only filesystem/system info (df, free, cat fadvise) ---
+        n(libc::SYS_statfs),
+        n(libc::SYS_fstatfs),
+        n(libc::SYS_fadvise64),
         n(libc::SYS_uname),
         n(libc::SYS_sysinfo),
+        n(libc::SYS_times),
         n(libc::SYS_getrandom),
+        n(libc::SYS_membarrier),
         n(libc::SYS_umask),
-        n(libc::SYS_prctl),
+        n(libc::SYS_prctl), // bash/glibc; no_new_privs is already latched
     ]
 }
 
@@ -154,6 +188,7 @@ fn arch_extra_allow() -> Vec<i64> {
         n(libc::SYS_arch_prctl),
         n(libc::SYS_epoll_create),
         n(libc::SYS_epoll_wait),
+        n(libc::SYS_getpgrp),
         n(libc::SYS_time),
     ]
 }
@@ -182,6 +217,42 @@ fn allowlist_for(profile: &str) -> Result<Vec<i64>, SandboxError> {
     }
 }
 
+/// `socket(2)` is allowed only for local-IPC address families. Two OR-ed
+/// rules: `domain == AF_UNIX` or `domain == AF_NETLINK`. Any other family
+/// (notably `AF_INET`/`AF_INET6`) matches neither rule and so hits the
+/// kill-on-mismatch default — no network socket can ever be created.
+fn socket_rules() -> Result<Vec<SeccompRule>, SandboxError> {
+    let compile = |e: seccompiler::BackendError| {
+        SandboxError::SeccompCompile(e.to_string())
+    };
+    let family = |af: libc::c_int| -> Result<SeccompRule, SandboxError> {
+        // arg0 of socket(2) is `domain`, a 32-bit int.
+        #[allow(clippy::cast_sign_loss)]
+        let cond = SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Eq,
+            af as u64,
+        )
+        .map_err(compile)?;
+        SeccompRule::new(vec![cond]).map_err(compile)
+    };
+    Ok(vec![family(libc::AF_UNIX)?, family(libc::AF_NETLINK)?])
+}
+
+/// The full rule map for a profile: every unconditional syscall mapped to an
+/// empty rule chain (allow), plus the argument-conditioned `socket` entry.
+fn rules_for(
+    profile: &str,
+) -> Result<BTreeMap<i64, Vec<SeccompRule>>, SandboxError> {
+    let mut rules: BTreeMap<i64, Vec<SeccompRule>> = allowlist_for(profile)?
+        .into_iter()
+        .map(|s| (s, Vec::new()))
+        .collect();
+    rules.insert(n(libc::SYS_socket), socket_rules()?);
+    Ok(rules)
+}
+
 /// A named profile resolved to a compiled BPF program, ready to install on
 /// the action thread just before `execve`.
 #[derive(Debug, Clone)]
@@ -200,8 +271,7 @@ impl SeccompProfile {
     ///   to BPF (should not happen for the in-code profiles; still surfaced
     ///   rather than panicked).
     pub fn compile(profile: &str) -> Result<Self, SandboxError> {
-        let syscalls = allowlist_for(profile)?;
-        let rules = syscalls.into_iter().map(|s| (s, Vec::new())).collect();
+        let rules = rules_for(profile)?;
 
         let filter = SeccompFilter::new(
             rules,
@@ -304,21 +374,42 @@ mod tests {
         // The whole point of layer #11: these must NOT be on the list, so
         // the kill-on-mismatch default terminates any attempt.
         for forbidden in [
-            libc::SYS_socket,
-            libc::SYS_connect,
             libc::SYS_mount,
             libc::SYS_ptrace,
             libc::SYS_setuid,
+            libc::SYS_setgid,
             libc::SYS_unlinkat,
             libc::SYS_init_module,
+            libc::SYS_finit_module,
             libc::SYS_kexec_load,
             libc::SYS_bpf,
+            libc::SYS_ptrace,
+            libc::SYS_listen,
+            libc::SYS_accept,
         ] {
             assert!(
                 !allow.contains(&forbidden),
                 "inspect must NOT allow dangerous syscall {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn socket_is_present_only_as_a_conditioned_rule() {
+        // `socket` is NOT an unconditional allow…
+        let allow = allowlist_for("inspect").expect("inspect resolves");
+        assert!(!allow.contains(&libc::SYS_socket));
+        // …but the compiled rule map carries it with non-empty (i.e.
+        // argument-conditioned) rules restricting the address family.
+        let rules = super::rules_for("inspect").expect("rules build");
+        let socket_rules = rules
+            .get(&libc::SYS_socket)
+            .expect("socket entry present");
+        assert_eq!(
+            socket_rules.len(),
+            2,
+            "expected AF_UNIX and AF_NETLINK rules"
+        );
     }
 
     #[test]
