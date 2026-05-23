@@ -29,9 +29,12 @@
 //! Requests are processed **serially** in v0.1 — the executor is the sole
 //! mutation point; serializing bounds blast rate and simplifies reasoning.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
-use archangel_core::{ActionId, OperationMode};
+use archangel_core::{ActionId, OperationMode, RiskLevel};
 use archangel_exec_format::{NetworkPolicy, OperatorTrust, VerifiedBundle};
 use archangel_ipc::{ExecOutcome, ExecRequest, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest};
@@ -39,6 +42,7 @@ use archangel_sandbox::{Cgroup, NetworkMode, SandboxPlan, SandboxPolicy};
 use archangel_snapshot::Snapshotter;
 
 use crate::{
+    ratelimit::{ActionClass, RateLimiter, RateLimits, RateRejection},
     replay::ReplayGuard,
     sandbox::{ActionRunner, RunContext},
 };
@@ -89,6 +93,9 @@ pub struct Executor<R: ActionRunner> {
     /// (`ReadOnly`), so a compromised daemon cannot lift the read-only
     /// switch by lying about the session mode.
     mode_ceiling: OperationMode,
+    /// Host-wide blast-rate limiter (#12). Bounds how fast actions run even
+    /// under a compromised daemon.
+    rate: RateLimiter,
 }
 
 /// `exec_name` must be a single safe path component. Anything with a slash,
@@ -129,7 +136,13 @@ impl<R: ActionRunner> Executor<R> {
             snapshotter,
             // Fail-closed default: no mutation until the host config opts in.
             mode_ceiling: OperationMode::ReadOnly,
+            rate: RateLimiter::new(RateLimits::default()),
         }
+    }
+
+    /// Set the host-wide blast-rate ceilings (#12) from the executor's config.
+    pub fn set_rate_limits(&mut self, limits: RateLimits) {
+        self.rate = RateLimiter::new(limits);
     }
 
     /// Set the executor's mutation ceiling from its own configuration.
@@ -170,6 +183,10 @@ impl<R: ActionRunner> Executor<R> {
         let bundle = self.resolve_bundle(&request)?;
         self.check_args_and_mutation(&request, &bundle)?;
         self.policy_gate(&request, &bundle)?;
+        // #12: bound the blast rate. Checked after the action is otherwise
+        // admissible, so only would-run actions consume budget; before any
+        // snapshot/sandbox work, so a shed action costs nothing.
+        self.rate_gate(&request, &bundle)?;
         // #16: no mutation without a recovery point (fail-closed).
         let snapshot_id = self.snapshot_gate(&request, &bundle)?;
         // #11: build the enforceable sandbox from the verified manifest.
@@ -360,6 +377,29 @@ impl<R: ActionRunner> Executor<R> {
                 "executor is in read-only mode; refusing a mutating bundle".to_owned(),
             ))
         }
+    }
+
+    /// Step 7.4 (#12): host-wide blast-rate ceiling. The action class comes
+    /// from the *verified bundle* (mutating = not read-only; critical =
+    /// declared risk), so the daemon cannot understate it to dodge a limit.
+    fn rate_gate(&mut self, request: &ExecRequest, bundle: &VerifiedBundle) -> Gate<()> {
+        let meta = &bundle.manifest().meta;
+        let class = ActionClass {
+            mutating: !meta.read_only,
+            critical: meta.risk == RiskLevel::Critical,
+        };
+        self.rate.try_admit(Instant::now(), class).map_err(|why| {
+            let detail = match why {
+                RateRejection::TotalPerMinute => "actions-per-minute",
+                RateRejection::MutatingPerMinute => "mutating-actions-per-minute",
+                RateRejection::CriticalPerHour => "critical-actions-per-hour",
+            };
+            ExecResponse::rejected(
+                request.action_id,
+                RejectStage::RateLimited,
+                format!("rate limit hit: {detail} ceiling exceeded"),
+            )
+        })
     }
 
     /// Step 7: denylist + allowlist re-evaluation (defense in depth).

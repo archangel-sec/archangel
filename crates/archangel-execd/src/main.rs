@@ -31,7 +31,7 @@ use tracing::{error, info, warn};
 use archangel_config::Config;
 use archangel_core::OperationMode;
 use archangel_exec_format::OperatorTrust;
-use archangel_execd::{BashRunner, ExecLimits, Executor};
+use archangel_execd::{BashRunner, ExecLimits, Executor, RateLimits};
 use archangel_ipc::{response_to_frame, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{Allowlist, PolicyEngine};
 
@@ -150,6 +150,9 @@ struct Settings {
     /// The executor's own mutation ceiling (`modes.default` from its config).
     /// Defaults to the safest (`ReadOnly`) when no config is present.
     mode_ceiling: OperationMode,
+    /// Host-wide blast-rate ceilings (`[rate_limits]`), enforced by the
+    /// executor (#12).
+    rate_limits: RateLimits,
 }
 
 fn resolve(args: Args) -> anyhow::Result<Settings> {
@@ -193,6 +196,13 @@ fn resolve(args: Args) -> anyhow::Result<Settings> {
     let mode_ceiling = cfg
         .as_ref()
         .map_or(OperationMode::ReadOnly, |c| c.modes.default);
+    // Blast-rate ceilings (#12) from config, mapped to the executor's type.
+    let rl = cfg.as_ref().map(|c| c.rate_limits).unwrap_or_default();
+    let rate_limits = RateLimits {
+        actions_per_minute: rl.actions_per_minute,
+        mutating_actions_per_minute: rl.mutating_actions_per_minute,
+        critical_actions_per_hour: rl.critical_actions_per_hour,
+    };
     Ok(Settings {
         socket,
         peer_uid,
@@ -202,6 +212,7 @@ fn resolve(args: Args) -> anyhow::Result<Settings> {
         session,
         timeout: Duration::from_secs(args.timeout_secs),
         mode_ceiling,
+        rate_limits,
     })
 }
 
@@ -314,6 +325,14 @@ async fn main() -> anyhow::Result<()> {
     // Independent mutation ceiling from the executor's own config (never the
     // daemon's claim). Read-only ⇒ every mutating bundle is refused here.
     executor.set_mode_ceiling(s.mode_ceiling);
+    // #12: host-wide blast-rate ceilings.
+    executor.set_rate_limits(s.rate_limits);
+    info!(
+        actions_per_minute = s.rate_limits.actions_per_minute,
+        mutating_per_minute = s.rate_limits.mutating_actions_per_minute,
+        critical_per_hour = s.rate_limits.critical_actions_per_hour,
+        "blast-rate ceilings active (#12)"
+    );
     if s.mode_ceiling.allows_mutation() {
         warn!(
             mode = ?s.mode_ceiling,

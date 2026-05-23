@@ -98,10 +98,14 @@ default = "read_only"
 autonomous_allowed = false
 
 [rate_limits]
-# Layer #12. Per-session ceilings.
+# Layer #12 — blast-rate ceilings. The first three are enforced HOST-WIDE by
+# the executor (trust tier T2), so they bound the rate even if the daemon is
+# compromised (it cannot exceed them by forging sessions). A value of 0 means
+# "none permitted" (fail-closed), NOT "unlimited".
 actions_per_minute = 20
 mutating_actions_per_minute = 5
 critical_actions_per_hour = 2
+# Enforced by the daemon (approvals never reach the executor).
 approval_requests_per_minute = 10
 
 [approval]

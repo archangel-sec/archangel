@@ -76,6 +76,10 @@ pub enum RejectStage {
     /// enforceable sandbox (unknown seccomp profile / capability, invalid
     /// resource limit, bad path). Fail-closed (#11): no sandbox, no run.
     SandboxRejected,
+    /// A host-wide blast-rate ceiling (#12) was hit: too many actions (total,
+    /// mutating, or critical) within the window. The action is shed to bound
+    /// the rate of any successful attack.
+    RateLimited,
     /// The action process failed to spawn, timed out, or was killed.
     ExecFailure,
 }

@@ -169,6 +169,35 @@ impl Default for LlmCfg {
     }
 }
 
+/// `[rate_limits]` — layer #12 blast-rate ceilings.
+///
+/// Enforced **host-wide by the executor** (trust tier T2), so they hold even
+/// if the daemon is compromised. A value of `0` means "none permitted"
+/// (fail-closed), not "unlimited".
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct RateLimitsCfg {
+    /// Max actions of any kind admitted per 60s.
+    pub actions_per_minute: u32,
+    /// Max mutating (`read_only = false`) actions admitted per 60s.
+    pub mutating_actions_per_minute: u32,
+    /// Max `risk = "critical"` actions admitted per hour.
+    pub critical_actions_per_hour: u32,
+    /// Max approval requests per 60s (enforced by the daemon, not T2).
+    pub approval_requests_per_minute: u32,
+}
+
+impl Default for RateLimitsCfg {
+    fn default() -> Self {
+        Self {
+            actions_per_minute: 20,
+            mutating_actions_per_minute: 5,
+            critical_actions_per_hour: 2,
+            approval_requests_per_minute: 10,
+        }
+    }
+}
+
 /// The parsed, validated configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -185,6 +214,9 @@ pub struct Config {
     /// `[llm]`.
     #[serde(default)]
     pub llm: LlmCfg,
+    /// `[rate_limits]`.
+    #[serde(default)]
+    pub rate_limits: RateLimitsCfg,
 }
 
 impl Config {
@@ -320,11 +352,25 @@ daemon_uid   = 1000
     }
 
     #[test]
-    fn forward_looking_sections_are_ignored() {
+    fn rate_limits_parse_and_unknown_sections_are_ignored() {
         let f = format!(
-            "{MINIMAL}\n[rate_limits]\nactions_per_minute=20\n\
+            "{MINIMAL}\n[rate_limits]\nactions_per_minute=7\n\
+             mutating_actions_per_minute=3\ncritical_actions_per_hour=1\n\
              [egress]\ndefault_policy=\"deny\"\n"
         );
-        assert!(Config::from_toml(&f).is_ok());
+        let c = Config::from_toml(&f).expect("valid");
+        assert_eq!(c.rate_limits.actions_per_minute, 7);
+        assert_eq!(c.rate_limits.mutating_actions_per_minute, 3);
+        assert_eq!(c.rate_limits.critical_actions_per_hour, 1);
+        // Field omitted in TOML falls back to the default.
+        assert_eq!(c.rate_limits.approval_requests_per_minute, 10);
+    }
+
+    #[test]
+    fn rate_limits_default_when_section_absent() {
+        let c = Config::from_toml(MINIMAL).expect("valid");
+        assert_eq!(c.rate_limits.actions_per_minute, 20);
+        assert_eq!(c.rate_limits.mutating_actions_per_minute, 5);
+        assert_eq!(c.rate_limits.critical_actions_per_hour, 2);
     }
 }

@@ -16,6 +16,8 @@
 pub mod error;
 /// The T2 security pipeline.
 pub mod handler;
+/// Blast-rate limiting (#12).
+pub mod ratelimit;
 /// Replay / reorder protection.
 pub mod replay;
 /// Minimal v0.1 process sandbox.
@@ -23,6 +25,7 @@ pub mod sandbox;
 
 pub use error::ExecdError;
 pub use handler::{ExecLimits, Executor};
+pub use ratelimit::{RateLimiter, RateLimits};
 pub use sandbox::{ActionRunner, BashRunner, RunContext, RunResult};
 
 #[cfg(test)]
@@ -46,6 +49,7 @@ mod tests {
 
     use super::{
         handler::{ExecLimits, Executor},
+        ratelimit::RateLimits,
         sandbox::{ActionRunner, RunContext, RunResult},
     };
 
@@ -524,6 +528,45 @@ inline = "{payload}"
                 }
             ),
             "expected a Completed with a snapshot id, got {outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rate_limit_sheds_actions_over_the_ceiling() {
+        // #12: with a 2/min total ceiling, the first two admitted actions
+        // run and the third is shed — even though it is otherwise valid.
+        let dir = unique_dir();
+        write_bundle(&dir, "read-logs", true, "echo hi", SVC_SCHEMA);
+        let mut ex = executor(dir.clone(), &["read-logs"]);
+        ex.set_rate_limits(RateLimits {
+            actions_per_minute: 2,
+            mutating_actions_per_minute: 5,
+            critical_actions_per_hour: 5,
+        });
+        for seq in 1..=2 {
+            let body = frame_body(
+                &request("read-logs", seq, arg("service", "nginx")),
+                &session_key(),
+            );
+            assert!(
+                matches!(ex.handle(&body).outcome, ExecOutcome::Completed { .. }),
+                "action {seq} should be admitted"
+            );
+        }
+        let body = frame_body(
+            &request("read-logs", 3, arg("service", "nginx")),
+            &session_key(),
+        );
+        assert!(
+            matches!(
+                ex.handle(&body).outcome,
+                ExecOutcome::Rejected {
+                    stage: RejectStage::RateLimited,
+                    ..
+                }
+            ),
+            "the third action must be shed by the rate limiter"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
