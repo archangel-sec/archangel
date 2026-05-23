@@ -33,6 +33,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use regex::{RegexSet, RegexSetBuilder};
+use tracing::warn;
+
+/// Compile-time memory ceiling per pattern set — a hostile or fat-fingered
+/// pattern cannot make compilation blow up.
+const REGEX_SIZE_LIMIT: usize = 1 << 20;
+
 /// Per-poll bounds. Both default conservatively; a flood is shed, not
 /// buffered.
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +176,161 @@ impl LogTailer {
     }
 }
 
+/// An operator-defined trigger pattern: the pre-filter for the model.
+///
+/// It decides which log lines are even worth the model's attention. The
+/// operator — not the model — controls this list, so the autonomous loop
+/// only ever reacts to events the operator opted into watching.
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    /// Human label (audit / which trigger fired).
+    pub label: String,
+    /// The (linear-time) regular expression to match against a log line.
+    pub regex: String,
+}
+
+/// Why a monitor could not be built.
+#[derive(Debug, thiserror::Error)]
+pub enum MonitorError {
+    /// A trigger pattern did not compile (reported with its label so the
+    /// operator can fix the offending entry).
+    #[error("invalid monitor pattern {label:?}: {source}")]
+    BadPattern {
+        /// The label of the offending pattern.
+        label: String,
+        /// The underlying regex error.
+        source: regex::Error,
+    },
+    /// The combined pattern set exceeded the compile-size ceiling.
+    #[error("monitor pattern set too large: {0}")]
+    SetTooLarge(regex::Error),
+}
+
+/// A compiled set of trigger patterns.
+///
+/// Built on the `regex` crate, which guarantees linear-time matching — a
+/// hostile log line (T6) cannot trigger catastrophic backtracking. Same
+/// anti-ReDoS basis as the denylist.
+#[derive(Debug)]
+pub struct LogMatcher {
+    set: RegexSet,
+    labels: Vec<String>,
+}
+
+impl LogMatcher {
+    /// Compile the operator's trigger patterns. Fail-closed: a single bad
+    /// pattern refuses the whole set (named by its label).
+    ///
+    /// # Errors
+    /// [`MonitorError::BadPattern`] / [`MonitorError::SetTooLarge`].
+    pub fn compile(patterns: &[Pattern]) -> Result<Self, MonitorError> {
+        // Validate each pattern individually first so the error names the
+        // offending label (a `RegexSet` build error would not).
+        for p in patterns {
+            RegexSetBuilder::new([&p.regex])
+                .size_limit(REGEX_SIZE_LIMIT)
+                .build()
+                .map_err(|source| MonitorError::BadPattern {
+                    label: p.label.clone(),
+                    source,
+                })?;
+        }
+        let set = RegexSetBuilder::new(patterns.iter().map(|p| &p.regex))
+            .size_limit(REGEX_SIZE_LIMIT)
+            .build()
+            .map_err(MonitorError::SetTooLarge)?;
+        Ok(Self {
+            set,
+            labels: patterns.iter().map(|p| p.label.clone()).collect(),
+        })
+    }
+
+    /// Labels of every pattern that matches `line` (empty ⇒ not a trigger).
+    #[must_use]
+    pub fn matches(&self, line: &str) -> Vec<String> {
+        self.set
+            .matches(line)
+            .into_iter()
+            .filter_map(|i| self.labels.get(i).cloned())
+            .collect()
+    }
+
+    /// True if there are no patterns (so nothing is ever a trigger).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+}
+
+/// A matched log line: an event whose content fired one or more triggers.
+/// Its `event.line` is still **hostile** — spotlight before any model use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alert {
+    /// The observed (bounded) log line.
+    pub event: LogEvent,
+    /// Labels of the trigger patterns that fired.
+    pub matched: Vec<String>,
+}
+
+/// Watches a set of files and surfaces only the lines that fire a trigger.
+///
+/// This is the complete *read-only* sensing layer for autonomous mode: it
+/// observes and screens, full stop. It performs no model call and takes no
+/// action — those belong to the (separately built, gate-respecting) decision
+/// loop that consumes these alerts.
+#[derive(Debug)]
+pub struct LogMonitor {
+    tailers: Vec<LogTailer>,
+    matcher: LogMatcher,
+}
+
+impl LogMonitor {
+    /// Build a monitor over `sources`, screening with `patterns`.
+    ///
+    /// # Errors
+    /// Propagates [`LogMatcher::compile`] failures (fail-closed).
+    pub fn new(
+        sources: Vec<PathBuf>,
+        limits: MonitorLimits,
+        patterns: &[Pattern],
+    ) -> Result<Self, MonitorError> {
+        let matcher = LogMatcher::compile(patterns)?;
+        let tailers = sources
+            .into_iter()
+            .map(|p| LogTailer::new(p, limits))
+            .collect();
+        Ok(Self { tailers, matcher })
+    }
+
+    /// Poll every watched file and return the new lines that fired a trigger.
+    /// A per-file I/O error (e.g. a permission change) is logged and skipped
+    /// for this round, never fatal — one unreadable log must not blind the
+    /// monitor to the others.
+    pub fn poll(&mut self) -> Vec<Alert> {
+        // Split the borrows so the matcher can be used while tailers iterate.
+        let Self { tailers, matcher } = self;
+        let mut alerts = Vec::new();
+        for tailer in tailers.iter_mut() {
+            match tailer.poll() {
+                Ok(events) => {
+                    for event in events {
+                        let matched = matcher.matches(&event.line);
+                        if !matched.is_empty() {
+                            alerts.push(Alert { event, matched });
+                        }
+                    }
+                }
+                Err(err) => warn!(
+                    path = %tailer.path().display(),
+                    %err,
+                    "log poll failed; skipping this source for this round"
+                ),
+            }
+        }
+        alerts
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -183,7 +345,14 @@ mod tests {
         sync::atomic::{AtomicU32, Ordering},
     };
 
-    use super::{LogTailer, MonitorLimits};
+    use super::{LogMatcher, LogMonitor, LogTailer, MonitorError, MonitorLimits, Pattern};
+
+    fn pat(label: &str, regex: &str) -> Pattern {
+        Pattern {
+            label: label.to_owned(),
+            regex: regex.to_owned(),
+        }
+    }
 
     fn tmp_log() -> std::path::PathBuf {
         static N: AtomicU32 = AtomicU32::new(0);
@@ -329,6 +498,79 @@ mod tests {
         let batch = t.poll().expect("poll");
         assert_eq!(batch[0].line, "windows");
         assert_eq!(batch[1].line, "unix");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // --- pattern matcher / monitor ---
+
+    #[test]
+    fn matcher_returns_labels_of_firing_patterns() {
+        let m = LogMatcher::compile(&[
+            pat("oom", "Out of memory"),
+            pat("error", "(?i)error"),
+            pat("ssh-fail", "Failed password"),
+        ])
+        .expect("compile");
+        assert_eq!(m.matches("kernel: Out of memory: Killed process"), ["oom"]);
+        assert_eq!(m.matches("sshd: Failed password for root"), ["ssh-fail"]);
+        // Case-insensitive pattern fires on mixed case; only that one.
+        assert_eq!(m.matches("ERROR: disk full"), ["error"]);
+        // A benign line fires nothing (not a trigger).
+        assert!(m.matches("normal heartbeat ok").is_empty());
+    }
+
+    #[test]
+    fn matcher_can_fire_multiple_labels() {
+        let m = LogMatcher::compile(&[pat("error", "(?i)error"), pat("disk", "disk")])
+            .expect("compile");
+        let labels = m.matches("error: disk full");
+        assert!(labels.contains(&"error".to_owned()));
+        assert!(labels.contains(&"disk".to_owned()));
+    }
+
+    #[test]
+    fn bad_pattern_is_refused_with_its_label() {
+        let err = LogMatcher::compile(&[pat("ok", "fine"), pat("broken", "(unclosed")])
+            .expect_err("must reject");
+        assert!(
+            matches!(&err, MonitorError::BadPattern { label, .. } if label == "broken"),
+            "expected BadPattern(broken), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn empty_patterns_match_nothing() {
+        let m = LogMatcher::compile(&[]).expect("compile empty");
+        assert!(m.is_empty());
+        assert!(m.matches("anything at all").is_empty());
+    }
+
+    #[test]
+    fn monitor_surfaces_only_matching_lines() {
+        let p = tmp_log();
+        let mut mon = LogMonitor::new(
+            vec![p.clone()],
+            MonitorLimits::default(),
+            &[pat("error", "(?i)error")],
+        )
+        .expect("monitor");
+        // Nothing yet (starts at end / empty file).
+        assert!(mon.poll().is_empty());
+        append(&p, "info: all good\nERROR: tank empty\ninfo: still fine\n");
+        let alerts = mon.poll();
+        assert_eq!(alerts.len(), 1, "only the error line is a trigger");
+        assert_eq!(alerts[0].event.line, "ERROR: tank empty");
+        assert_eq!(alerts[0].matched, ["error"]);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn monitor_with_no_patterns_never_alerts() {
+        let p = tmp_log();
+        let mut mon =
+            LogMonitor::new(vec![p.clone()], MonitorLimits::default(), &[]).expect("monitor");
+        append(&p, "ERROR: but no patterns configured\n");
+        assert!(mon.poll().is_empty());
         let _ = std::fs::remove_file(&p);
     }
 }

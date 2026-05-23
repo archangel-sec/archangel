@@ -87,9 +87,11 @@ seccompiler = "0.5"
 # linear-time matching — no catastrophic backtracking / ReDoS — which is a
 # security property for the compiled denylist that inspects partly
 # LLM-derived strings. `unicode-perl` is required for the `\w`/`\b`/`\s`
-# word-boundary anchors the denylist relies on; matching the wrong way
-# here is a denylist-bypass risk, so correctness wins over binary size.
-regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl"] }
+# word-boundary anchors the denylist relies on; `unicode-case` lets operators
+# write case-insensitive `(?i)` log-monitor triggers (#12 pre-filter).
+# Matching the wrong way here is a denylist-bypass risk, so correctness wins
+# over binary size.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case"] }
 globset = { version = "0.4", default-features = false }
 
 # WASM policy engine
