@@ -33,7 +33,10 @@ pub mod session;
 pub mod transport;
 
 pub use archangel_config::{Config, ConfigError};
-pub use monitor::{LogEvent, LogTailer, MonitorLimits};
+pub use monitor::{
+    Alert, CooldownGate, LogEvent, LogMatcher, LogMonitor, LogTailer, MonitorError, MonitorLimits,
+    Pattern,
+};
 pub use orchestrator::{ExecTransport, Orchestrator, OrchestratorError, TaskOutcome};
 pub use response::{parse_model_response, ModelAction, ResponseError};
 pub use server::{handle_ctl_frame, CtlReplayGuard, CtlService};

@@ -131,3 +131,37 @@ allow = [
     # "api.anthropic.com",
     # "127.0.0.1:11434",   # Ollama
 ]
+
+[monitor]
+# Real-time log monitoring (v0.3 autonomous foundation). OFF by default: the
+# daemon watches nothing until you opt in. Even enabled, anything it leads to
+# still passes the full gated pipeline (signed bundle, denylist/allowlist,
+# snapshot, sandbox, rate limits, and — interactive mode — operator approval).
+enabled = false
+# How often to poll the watched files, in seconds.
+poll_interval_secs = 5
+# Per-trigger cooldown (seconds): the same trigger will not be acted on again
+# within this window — the anti-runaway rail that stops a persistent log
+# condition from driving repeated actions. 0 disables the cooldown.
+cooldown_secs = 300
+# Absolute paths of log files to tail. Only NEW lines (written after start)
+# are seen. Treated as hostile input (threat model T6).
+sources = [
+    # "/var/log/syslog",
+    # "/var/log/auth.log",
+]
+# Anti-flood bounds: overlong lines are truncated, and at most
+# max_lines_per_poll lines are taken per poll (the rest wait).
+max_line_bytes = 4096
+max_lines_per_poll = 256
+
+# Operator-defined triggers — ONLY lines matching these reach the model, so
+# you (not the model) decide what the agent even looks at. Linear-time regex
+# (anti-ReDoS); `(?i)` is case-insensitive.
+# [[monitor.patterns]]
+# label = "oom-killer"
+# regex = "Out of memory: Killed process"
+#
+# [[monitor.patterns]]
+# label = "ssh-bruteforce"
+# regex = "(?i)failed password for"

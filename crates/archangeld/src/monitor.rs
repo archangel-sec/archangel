@@ -27,10 +27,16 @@
 //! the offset resets to the start. A file that does not yet exist is not an
 //! error — it simply yields nothing until it appears.
 
+// Cooldown/window math reads most clearly in seconds; the larger-unit
+// `Duration` constructors clippy prefers are unstable.
+#![allow(clippy::duration_suboptimal_units)]
+
 use std::{
+    collections::HashMap,
     fs::File,
     io::{BufRead as _, BufReader, Seek as _, SeekFrom},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use regex::{RegexSet, RegexSetBuilder};
@@ -331,6 +337,62 @@ impl LogMonitor {
     }
 }
 
+/// The autonomous loop's anti-runaway rail.
+///
+/// Keyed by a caller-chosen fingerprint (e.g. source + matched labels): once
+/// a key fires it is suppressed until the cooldown window elapses. This is
+/// what stops a *persistent* log condition — the same error line every
+/// second — from driving the same action over and over. Without it, a single
+/// stuck service could make the agent act in a tight loop.
+///
+/// Time is injected, so the behaviour is deterministically testable. Memory
+/// is bounded: keys that have aged past the window are pruned on every call,
+/// so a flood of distinct keys cannot grow the map without bound beyond what
+/// fits inside one window.
+#[derive(Debug)]
+pub struct CooldownGate {
+    window: Duration,
+    last: HashMap<String, Instant>,
+}
+
+impl CooldownGate {
+    /// New gate with the given per-key cooldown. A zero window disables
+    /// cooldown (every call is admitted).
+    #[must_use]
+    pub fn new(window: Duration) -> Self {
+        Self {
+            window,
+            last: HashMap::new(),
+        }
+    }
+
+    /// Returns `true` if `key` may fire at `now` (and records the firing);
+    /// `false` if it is still within its cooldown window.
+    pub fn admit(&mut self, now: Instant, key: &str) -> bool {
+        self.prune(now);
+        if let Some(&fired) = self.last.get(key) {
+            if now.saturating_duration_since(fired) < self.window {
+                return false;
+            }
+        }
+        self.last.insert(key.to_owned(), now);
+        true
+    }
+
+    /// Drop keys whose cooldown has fully elapsed (bounds memory).
+    fn prune(&mut self, now: Instant) {
+        let window = self.window;
+        self.last
+            .retain(|_, &mut fired| now.saturating_duration_since(fired) < window);
+    }
+
+    /// Number of keys currently tracked (for tests / diagnostics).
+    #[must_use]
+    pub fn tracked(&self) -> usize {
+        self.last.len()
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -345,7 +407,11 @@ mod tests {
         sync::atomic::{AtomicU32, Ordering},
     };
 
-    use super::{LogMatcher, LogMonitor, LogTailer, MonitorError, MonitorLimits, Pattern};
+    use std::time::{Duration, Instant};
+
+    use super::{
+        CooldownGate, LogMatcher, LogMonitor, LogTailer, MonitorError, MonitorLimits, Pattern,
+    };
 
     fn pat(label: &str, regex: &str) -> Pattern {
         Pattern {
@@ -572,5 +638,47 @@ mod tests {
         append(&p, "ERROR: but no patterns configured\n");
         assert!(mon.poll().is_empty());
         let _ = std::fs::remove_file(&p);
+    }
+
+    // --- cooldown gate ---
+
+    #[test]
+    fn cooldown_suppresses_repeats_until_window_elapses() {
+        let mut g = CooldownGate::new(Duration::from_secs(60));
+        let t = Instant::now();
+        assert!(g.admit(t, "oom@/var/log/syslog"), "first firing admitted");
+        // Same key, still cooling down.
+        assert!(!g.admit(t + Duration::from_secs(1), "oom@/var/log/syslog"));
+        assert!(!g.admit(t + Duration::from_secs(59), "oom@/var/log/syslog"));
+        // Window elapsed ⇒ admitted again.
+        assert!(g.admit(t + Duration::from_secs(60), "oom@/var/log/syslog"));
+    }
+
+    #[test]
+    fn cooldown_keys_are_independent() {
+        let mut g = CooldownGate::new(Duration::from_secs(60));
+        let t = Instant::now();
+        assert!(g.admit(t, "a"));
+        assert!(g.admit(t, "b"), "a different trigger is not suppressed");
+        assert!(!g.admit(t, "a"));
+    }
+
+    #[test]
+    fn cooldown_prunes_stale_keys() {
+        let mut g = CooldownGate::new(Duration::from_secs(60));
+        let t = Instant::now();
+        assert!(g.admit(t, "a"));
+        assert_eq!(g.tracked(), 1);
+        // Long after a's window, a new key prunes the stale one.
+        assert!(g.admit(t + Duration::from_secs(120), "b"));
+        assert_eq!(g.tracked(), 1, "the expired key was pruned, not retained");
+    }
+
+    #[test]
+    fn zero_window_disables_cooldown() {
+        let mut g = CooldownGate::new(Duration::ZERO);
+        let t = Instant::now();
+        assert!(g.admit(t, "a"));
+        assert!(g.admit(t, "a"), "a zero window admits every time");
     }
 }

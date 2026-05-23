@@ -198,6 +198,56 @@ impl Default for RateLimitsCfg {
     }
 }
 
+/// One `[[monitor.patterns]]` entry — an operator-defined log trigger.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MonitorPatternCfg {
+    /// Human label (audit / which trigger fired).
+    pub label: String,
+    /// Linear-time regular expression matched against each log line.
+    pub regex: String,
+}
+
+/// `[monitor]` — real-time log monitoring (v0.3 autonomous foundation).
+///
+/// **Off by default** (fail-closed): the daemon watches nothing until an
+/// operator opts in. Even when enabled, this only feeds the *existing* gated
+/// pipeline — any action it leads to is still signed, denylisted, snapshotted,
+/// sandboxed, rate-limited, and (interactive) approved.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MonitorCfg {
+    /// Master switch. When false, no files are watched and no loop runs.
+    pub enabled: bool,
+    /// How often (seconds) to poll the watched files.
+    pub poll_interval_secs: u64,
+    /// Per-trigger cooldown (seconds): the same trigger fingerprint will not
+    /// be acted on again within this window — the anti-runaway rail that
+    /// stops a persistent log condition from driving repeated actions.
+    pub cooldown_secs: u64,
+    /// Absolute paths of the log files to watch.
+    pub sources: Vec<PathBuf>,
+    /// Operator-defined trigger patterns; only matching lines reach the model.
+    pub patterns: Vec<MonitorPatternCfg>,
+    /// Per-line byte cap (overlong lines truncated) — anti-flood.
+    pub max_line_bytes: usize,
+    /// Per-poll line cap (excess deferred) — anti-flood.
+    pub max_lines_per_poll: usize,
+}
+
+impl Default for MonitorCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 5,
+            cooldown_secs: 300,
+            sources: Vec::new(),
+            patterns: Vec::new(),
+            max_line_bytes: 4096,
+            max_lines_per_poll: 256,
+        }
+    }
+}
+
 /// The parsed, validated configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -217,6 +267,9 @@ pub struct Config {
     /// `[rate_limits]`.
     #[serde(default)]
     pub rate_limits: RateLimitsCfg,
+    /// `[monitor]`.
+    #[serde(default)]
+    pub monitor: MonitorCfg,
 }
 
 impl Config {
@@ -281,6 +334,22 @@ impl Config {
             }
         }
 
+        if self.monitor.enabled {
+            for p in &self.monitor.sources {
+                if !p.is_absolute() {
+                    return Err(ConfigError::Invalid(format!(
+                        "monitor.sources entry must be an absolute path, got {}",
+                        p.display()
+                    )));
+                }
+            }
+            if self.monitor.poll_interval_secs == 0 {
+                return Err(ConfigError::Invalid(
+                    "monitor.poll_interval_secs must be > 0 when monitoring is enabled".to_owned(),
+                ));
+            }
+        }
+
         Ok(())
     }
 }
@@ -324,6 +393,47 @@ daemon_uid   = 1000
     fn missing_operator_uid_is_rejected() {
         let bad = MINIMAL.replace("operator_uid = 1000\n", "");
         assert!(Config::from_toml(&bad).is_err(), "uid is required");
+    }
+
+    #[test]
+    fn monitor_is_disabled_by_default() {
+        let c = Config::from_toml(MINIMAL).expect("valid");
+        assert!(!c.monitor.enabled, "monitoring must be off unless opted in");
+        assert!(c.monitor.sources.is_empty());
+        assert_eq!(c.monitor.cooldown_secs, 300);
+    }
+
+    #[test]
+    fn enabled_monitor_parses_sources_and_patterns() {
+        let f = format!(
+            "{MINIMAL}\n[monitor]\nenabled=true\npoll_interval_secs=3\n\
+             sources=[\"/var/log/syslog\"]\n\
+             [[monitor.patterns]]\nlabel=\"oom\"\nregex=\"Out of memory\"\n"
+        );
+        let c = Config::from_toml(&f).expect("valid");
+        assert!(c.monitor.enabled);
+        assert_eq!(c.monitor.poll_interval_secs, 3);
+        assert_eq!(c.monitor.sources.len(), 1);
+        assert_eq!(
+            c.monitor.patterns.first().map(|p| p.label.as_str()),
+            Some("oom")
+        );
+    }
+
+    #[test]
+    fn enabled_monitor_with_relative_source_is_refused() {
+        let f = format!("{MINIMAL}\n[monitor]\nenabled=true\nsources=[\"var/log/syslog\"]\n");
+        assert!(
+            Config::from_toml(&f).is_err(),
+            "a relative watched path must be refused when monitoring is on"
+        );
+    }
+
+    #[test]
+    fn disabled_monitor_ignores_relative_source() {
+        // When off, the watched paths are inert, so they are not validated.
+        let f = format!("{MINIMAL}\n[monitor]\nenabled=false\nsources=[\"relative/path\"]\n");
+        assert!(Config::from_toml(&f).is_ok());
     }
 
     #[test]
