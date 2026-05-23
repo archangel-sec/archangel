@@ -21,11 +21,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// Audit entries, events, and the canonicalization rules.
+pub mod entry;
 /// Audit subsystem error types.
 pub mod error;
 mod hex;
-/// Audit entries, events, and the canonicalization rules.
-pub mod entry;
 /// Ed25519 key handling.
 pub mod key;
 /// The append-only log writer.
@@ -72,8 +72,8 @@ mod tests {
         let keypair = AuditKeypair::generate();
         let mut buf: Vec<u8> = Vec::new();
         {
-            let mut log = AuditLog::with_sink(&mut buf, clone_keypair(&keypair))
-                .expect("create log");
+            let mut log =
+                AuditLog::with_sink(&mut buf, clone_keypair(&keypair)).expect("create log");
             let session = SessionId::new();
             let action = ActionId::new();
             log.append(AuditEvent::SessionStarted {
@@ -112,8 +112,8 @@ mod tests {
     #[test]
     fn full_chain_verifies() {
         let (buf, keypair) = write_sample_log();
-        let head = verify_chain(Cursor::new(&buf), &keypair.verifying_key())
-            .expect("verify full chain");
+        let head =
+            verify_chain(Cursor::new(&buf), &keypair.verifying_key()).expect("verify full chain");
         // genesis + session_started + policy_decision + session_ended
         assert_eq!(head.entries, 4);
         assert_eq!(head.next_seq, 4);
@@ -137,7 +137,10 @@ mod tests {
             *b ^= 0xff;
         }
         let result = verify_chain(Cursor::new(&buf), &keypair.verifying_key());
-        assert!(result.is_err(), "a single flipped byte must break the chain");
+        assert!(
+            result.is_err(),
+            "a single flipped byte must break the chain"
+        );
     }
 
     #[test]
@@ -159,8 +162,7 @@ mod tests {
         let mut lines: Vec<String> = text.lines().map(ToOwned::to_owned).collect();
         lines.swap(1, 2);
         let reordered = lines.join("\n");
-        let result =
-            verify_chain(Cursor::new(reordered.as_bytes()), &keypair.verifying_key());
+        let result = verify_chain(Cursor::new(reordered.as_bytes()), &keypair.verifying_key());
         assert!(result.is_err(), "reordering must break the chain");
     }
 
@@ -175,10 +177,9 @@ mod tests {
     #[test]
     fn keypair_seed_round_trips() {
         let kp = AuditKeypair::generate();
-        let restored = AuditKeypair::from_secret_hex(&super::hex::encode(
-            kp.secret_bytes().expose_secret(),
-        ))
-        .expect("restore from hex seed");
+        let restored =
+            AuditKeypair::from_secret_hex(&super::hex::encode(kp.secret_bytes().expose_secret()))
+                .expect("restore from hex seed");
         assert_eq!(kp.public_hex(), restored.public_hex());
     }
 }

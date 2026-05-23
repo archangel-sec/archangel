@@ -152,10 +152,7 @@ mod tests {
         let a = Session::new(OperationMode::ReadOnly, "default");
         let b = Session::new(OperationMode::ReadOnly, "default");
         assert_ne!(a.id(), b.id());
-        assert_ne!(
-            a.verifying_key().as_bytes(),
-            b.verifying_key().as_bytes()
-        );
+        assert_ne!(a.verifying_key().as_bytes(), b.verifying_key().as_bytes());
     }
 
     #[test]

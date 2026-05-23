@@ -80,18 +80,11 @@ fn render_outcome(palette: Palette, outcome: &CtlOutcome) -> String {
                     }
                 ),
             );
-            let body = untrusted_block(
-                palette,
-                Block::Proposal,
-                "will run",
-                preview,
-            );
+            let body = untrusted_block(palette, Block::Proposal, "will run", preview);
             let prompt = trusted_line(
                 palette,
                 Block::Approval,
-                &format!(
-                    "/approve {approval_id} {action_digest}   |   /reject {approval_id}"
-                ),
+                &format!("/approve {approval_id} {action_digest}   |   /reject {approval_id}"),
             );
             format!("{header}\n{body}\n{prompt}")
         }
@@ -110,30 +103,16 @@ fn render_outcome(palette: Palette, outcome: &CtlOutcome) -> String {
             let header = trusted_line(
                 palette,
                 Block::Proposal,
-                &format!(
-                    "{} ran (exit {})",
-                    sanitize_untrusted(exec),
-                    exit_code
-                ),
+                &format!("{} ran (exit {})", sanitize_untrusted(exec), exit_code),
             );
             let mut out = header;
             if !stdout.is_empty() {
                 out.push('\n');
-                out.push_str(&untrusted_block(
-                    palette,
-                    Block::Output,
-                    "stdout",
-                    stdout,
-                ));
+                out.push_str(&untrusted_block(palette, Block::Output, "stdout", stdout));
             }
             if !stderr.is_empty() {
                 out.push('\n');
-                out.push_str(&untrusted_block(
-                    palette,
-                    Block::Output,
-                    "stderr",
-                    stderr,
-                ));
+                out.push_str(&untrusted_block(palette, Block::Output, "stderr", stderr));
             }
             out
         }
@@ -184,7 +163,6 @@ mod tests {
 
     #[test]
     fn pong_renders() {
-        assert!(render_response(Palette::fixed(false), &CtlResponse::Pong)
-            .contains("pong"));
+        assert!(render_response(Palette::fixed(false), &CtlResponse::Pong).contains("pong"));
     }
 }

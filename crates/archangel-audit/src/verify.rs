@@ -62,12 +62,11 @@ pub fn verify_chain<R: BufRead>(
             continue;
         }
 
-        let entry: AuditEntry = serde_json::from_str(&line).map_err(|e| {
-            AuditError::ChainBroken {
+        let entry: AuditEntry =
+            serde_json::from_str(&line).map_err(|e| AuditError::ChainBroken {
                 seq: expected_seq,
                 reason: format!("entry does not parse as JSON: {e}"),
-            }
-        })?;
+            })?;
 
         verify_entry(&entry, expected_seq, &chain_head, expected_public_key)?;
 

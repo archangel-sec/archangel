@@ -56,12 +56,11 @@ pub(crate) fn validate(
 
                 if let Some(pattern) = &spec.regex {
                     let anchored = format!(r"\A(?:{pattern})\z");
-                    let re = Regex::new(&anchored).map_err(|source| {
-                        ExecFormatError::BadArgRegex {
+                    let re =
+                        Regex::new(&anchored).map_err(|source| ExecFormatError::BadArgRegex {
                             arg: name.clone(),
                             source,
-                        }
-                    })?;
+                        })?;
                     if !re.is_match(value) {
                         return Err(ExecFormatError::ArgRejected(format!(
                             "argument {name:?} value does not match its schema pattern"

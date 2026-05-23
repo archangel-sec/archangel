@@ -15,16 +15,16 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Error types.
-pub mod error;
 /// The signed, versioned envelope and length-prefixed framing.
 pub mod envelope;
+/// Error types.
+pub mod error;
 /// Control-plane message types.
 pub mod message;
 
 pub use envelope::{
-    response_from_frame_body, response_to_frame, CtlBody, SignedCtlEnvelope,
-    MAX_FRAME_LEN, PROTOCOL_VERSION,
+    response_from_frame_body, response_to_frame, CtlBody, SignedCtlEnvelope, MAX_FRAME_LEN,
+    PROTOCOL_VERSION,
 };
 pub use error::CtlError;
 pub use message::{CtlOutcome, CtlRequest, CtlResponse};
@@ -116,9 +116,8 @@ mod tests {
         let frame = env.to_frame().expect("frame");
         let prefix: [u8; 4] = frame.get(..4).expect("p").try_into().expect("4");
         let len = SignedCtlEnvelope::frame_len(prefix).expect("len");
-        let decoded =
-            SignedCtlEnvelope::from_frame_body(frame.get(4..4 + len).expect("body"))
-                .expect("decode");
+        let decoded = SignedCtlEnvelope::from_frame_body(frame.get(4..4 + len).expect("body"))
+            .expect("decode");
         assert_eq!(decoded.open(&k.verifying_key()).expect("open"), b);
     }
 
@@ -141,8 +140,7 @@ mod tests {
         });
         let frame = super::response_to_frame(&r).expect("frame");
         let decoded =
-            super::response_from_frame_body(frame.get(4..).expect("body"))
-                .expect("decode");
+            super::response_from_frame_body(frame.get(4..).expect("body")).expect("decode");
         assert_eq!(decoded, r);
     }
 }

@@ -11,11 +11,7 @@
 //! - the secret is held in a zeroizing buffer off-disk and the in-memory
 //!   `SigningKey` zeroizes on drop (ed25519-dalek `zeroize`).
 
-use std::{
-    io::Write as _,
-    os::unix::fs::OpenOptionsExt as _,
-    path::Path,
-};
+use std::{io::Write as _, os::unix::fs::OpenOptionsExt as _, path::Path};
 
 use ed25519_dalek::{Signer as _, SigningKey};
 
@@ -60,10 +56,7 @@ fn nibble(b: u8) -> Result<u8, CtlError> {
 ///
 /// Returns the public key hex. Fails (without writing anything) if either
 /// path already exists.
-pub fn init_operator_key(
-    secret_path: &Path,
-    public_path: &Path,
-) -> Result<String, CtlError> {
+pub fn init_operator_key(secret_path: &Path, public_path: &Path) -> Result<String, CtlError> {
     if secret_path.exists() || public_path.exists() {
         return Err(CtlError::Key(format!(
             "refusing to overwrite existing key material at {} / {}",
@@ -114,8 +107,8 @@ pub fn sign_bundle(
     manifest_path: &Path,
 ) -> Result<std::path::PathBuf, CtlError> {
     let key = load_operator_key(secret_path)?;
-    let bytes = std::fs::read(manifest_path)
-        .map_err(|e| CtlError::Key(format!("read manifest: {e}")))?;
+    let bytes =
+        std::fs::read(manifest_path).map_err(|e| CtlError::Key(format!("read manifest: {e}")))?;
     let sig = key.sign(&bytes).to_bytes();
     let mut sig_path = manifest_path.as_os_str().to_owned();
     sig_path.push(".sig");

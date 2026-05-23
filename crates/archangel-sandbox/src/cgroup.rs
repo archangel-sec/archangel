@@ -87,26 +87,23 @@ impl MemoryMax {
     pub fn parse(s: &str) -> Result<Self, SandboxError> {
         let s = s.trim();
         if s.is_empty() {
-            return Err(SandboxError::InvalidLimit(
-                "memory_max: empty".to_owned(),
-            ));
+            return Err(SandboxError::InvalidLimit("memory_max: empty".to_owned()));
         }
         let bad = |m: String| SandboxError::InvalidLimit(m);
 
-        let (num_part, multiplier): (&str, u64) =
-            if let Some(p) = s.strip_suffix(['k', 'K']) {
-                (p, 1024)
-            } else if let Some(p) = s.strip_suffix(['m', 'M']) {
-                (p, 1024 * 1024)
-            } else if let Some(p) = s.strip_suffix(['g', 'G']) {
-                (p, 1024 * 1024 * 1024)
-            } else if s.ends_with(|c: char| c.is_ascii_digit()) {
-                (s, 1)
-            } else {
-                return Err(bad(format!(
-                    "memory_max {s:?}: unknown unit (use K/M/G or raw bytes)"
-                )));
-            };
+        let (num_part, multiplier): (&str, u64) = if let Some(p) = s.strip_suffix(['k', 'K']) {
+            (p, 1024)
+        } else if let Some(p) = s.strip_suffix(['m', 'M']) {
+            (p, 1024 * 1024)
+        } else if let Some(p) = s.strip_suffix(['g', 'G']) {
+            (p, 1024 * 1024 * 1024)
+        } else if s.ends_with(|c: char| c.is_ascii_digit()) {
+            (s, 1)
+        } else {
+            return Err(bad(format!(
+                "memory_max {s:?}: unknown unit (use K/M/G or raw bytes)"
+            )));
+        };
         if num_part.is_empty() || !num_part.bytes().all(|b| b.is_ascii_digit()) {
             return Err(bad(format!("memory_max {s:?}: non-integer amount")));
         }
@@ -118,7 +115,7 @@ impl MemoryMax {
             .ok_or_else(|| bad(format!("memory_max {s:?}: byte count overflow")))?;
         if bytes == 0 {
             return Err(bad(
-                "memory_max: zero would make every allocation fail".to_owned(),
+                "memory_max: zero would make every allocation fail".to_owned()
             ));
         }
         if bytes > MAX_MEMORY_BYTES {
@@ -156,13 +153,21 @@ mod tests {
     #[test]
     fn cpu_percent_maps_to_quota_period() {
         assert_eq!(CpuMax::parse("10%").unwrap().cgroup_value(), "10000 100000");
-        assert_eq!(CpuMax::parse("100%").unwrap().cgroup_value(), "100000 100000");
-        assert_eq!(CpuMax::parse(" 25% ").unwrap().cgroup_value(), "25000 100000");
+        assert_eq!(
+            CpuMax::parse("100%").unwrap().cgroup_value(),
+            "100000 100000"
+        );
+        assert_eq!(
+            CpuMax::parse(" 25% ").unwrap().cgroup_value(),
+            "25000 100000"
+        );
     }
 
     #[test]
     fn cpu_rejects_garbage_zero_and_over_ceiling() {
-        for bad in ["", "%", "10", "abc%", "-5%", "10 %", "0%", "101%", "1000%", "10%%", "1e3%"] {
+        for bad in [
+            "", "%", "10", "abc%", "-5%", "10 %", "0%", "101%", "1000%", "10%%", "1e3%",
+        ] {
             assert!(
                 is_invalid(CpuMax::parse(bad)),
                 "cpu_max {bad:?} must be rejected"
@@ -185,7 +190,16 @@ mod tests {
     #[test]
     fn memory_rejects_garbage_zero_overflow_and_unknown_units() {
         for bad in [
-            "", " ", "M", "abc", "12X", "12.5M", "-1", "0", "0M", "0G",
+            "",
+            " ",
+            "M",
+            "abc",
+            "12X",
+            "12.5M",
+            "-1",
+            "0",
+            "0M",
+            "0G",
             "99999999999999999999999999G", // value overflow
             "18446744073709551615K",       // *1024 overflows u64
             "2T",                          // unknown unit

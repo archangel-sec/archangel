@@ -21,10 +21,7 @@ pub trait LlmBackend: Send + Sync {
 
     /// Run one completion. Implementations must enforce the request
     /// timeout, the response-size cap, no redirects, and no proxies.
-    async fn complete(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<CompletionResponse, LlmError>;
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError>;
 
     /// Whether the backend advertises a given capability.
     fn supports(&self, capability: BackendCapability) -> bool;

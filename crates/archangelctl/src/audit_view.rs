@@ -19,11 +19,7 @@ use crate::render::{sanitize_untrusted, trusted_line, Block, Palette};
 
 /// Verify `log_bytes` against `pinned_pub_hex` and render a human view.
 #[must_use]
-pub fn verify_and_render(
-    log_bytes: &[u8],
-    pinned_pub_hex: &str,
-    palette: Palette,
-) -> String {
+pub fn verify_and_render(log_bytes: &[u8], pinned_pub_hex: &str, palette: Palette) -> String {
     let vk = match verifying_key_from_hex(pinned_pub_hex.trim()) {
         Ok(k) => k,
         Err(e) => {
@@ -53,9 +49,7 @@ pub fn verify_and_render(
                 Block::Error,
                 &format!("AUDIT CHAIN FAILED VERIFICATION: {e}"),
             ));
-            out.push_str(
-                "\n(entries below are shown for forensics and must NOT be trusted)\n",
-            );
+            out.push_str("\n(entries below are shown for forensics and must NOT be trusted)\n");
         }
     }
     out.push('\n');
@@ -68,12 +62,9 @@ pub fn verify_and_render(
             Ok(entry) => {
                 let kind = serde_json::to_value(&entry.record.event)
                     .ok()
-                    .and_then(|v| {
-                        v.get("type").and_then(|t| t.as_str()).map(str::to_owned)
-                    })
+                    .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
                     .unwrap_or_else(|| "unknown".to_owned());
-                let payload = serde_json::to_string(&entry.record.event)
-                    .unwrap_or_default();
+                let payload = serde_json::to_string(&entry.record.event).unwrap_or_default();
                 trusted_line(
                     palette,
                     Block::Status,
@@ -109,18 +100,11 @@ mod tests {
     fn sample_log() -> (Vec<u8>, String) {
         let kp = AuditKeypair::generate();
         let pub_hex = kp.public_hex();
-        let seed: [u8; 32] = kp
-            .secret_bytes()
-            .expose_secret()
-            .try_into()
-            .expect("seed");
+        let seed: [u8; 32] = kp.secret_bytes().expose_secret().try_into().expect("seed");
         let mut buf = Vec::new();
         {
-            let mut log = AuditLog::with_sink(
-                &mut buf,
-                AuditKeypair::from_secret_bytes(&seed),
-            )
-            .expect("log");
+            let mut log =
+                AuditLog::with_sink(&mut buf, AuditKeypair::from_secret_bytes(&seed)).expect("log");
             log.append(AuditEvent::Note {
                 message: "daemon started".to_owned(),
             })
@@ -161,18 +145,11 @@ mod tests {
         // A note whose message tries to inject ANSI must be neutralized.
         let kp = AuditKeypair::generate();
         let pub_hex = kp.public_hex();
-        let seed: [u8; 32] = kp
-            .secret_bytes()
-            .expose_secret()
-            .try_into()
-            .expect("seed");
+        let seed: [u8; 32] = kp.secret_bytes().expose_secret().try_into().expect("seed");
         let mut buf = Vec::new();
         {
-            let mut log = AuditLog::with_sink(
-                &mut buf,
-                AuditKeypair::from_secret_bytes(&seed),
-            )
-            .expect("log");
+            let mut log =
+                AuditLog::with_sink(&mut buf, AuditKeypair::from_secret_bytes(&seed)).expect("log");
             log.append(AuditEvent::Note {
                 message: "evil\u{1b}[2J\u{1b}[1;1H[ APPROVED ]".to_owned(),
             })

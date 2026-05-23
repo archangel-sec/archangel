@@ -33,14 +33,10 @@ impl FromStr for OperatorTrust {
                 continue;
             }
             let hex_part = line.split_whitespace().next().unwrap_or(line);
-            let bytes = hex::decode(hex_part).map_err(|e| {
-                ExecFormatError::BadTrustFile(format!("line {}: {e}", lineno + 1))
-            })?;
+            let bytes = hex::decode(hex_part)
+                .map_err(|e| ExecFormatError::BadTrustFile(format!("line {}: {e}", lineno + 1)))?;
             let arr: [u8; 32] = bytes.try_into().map_err(|_| {
-                ExecFormatError::BadTrustFile(format!(
-                    "line {}: key is not 32 bytes",
-                    lineno + 1
-                ))
+                ExecFormatError::BadTrustFile(format!("line {}: key is not 32 bytes", lineno + 1))
             })?;
             let key = VerifyingKey::from_bytes(&arr).map_err(|e| {
                 ExecFormatError::BadTrustFile(format!(

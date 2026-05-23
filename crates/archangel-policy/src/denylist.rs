@@ -401,7 +401,8 @@ impl Denylist {
         };
 
         // `Any`-scope rules deny every access, including reads.
-        if let Some(owner) = first_glob_owner(&compiled.any_globs, &compiled.any_owners, &normalized)
+        if let Some(owner) =
+            first_glob_owner(&compiled.any_globs, &compiled.any_owners, &normalized)
         {
             return Ok(Some(owner.matched(&normalized)));
         }
@@ -429,7 +430,7 @@ fn first_glob_owner(set: &GlobSet, owners: &[Owner], path: &str) -> Option<Owner
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{Denylist, DenyCategory, PathAccess};
+    use super::{DenyCategory, Denylist, PathAccess};
 
     #[test]
     fn denylist_compiles() {
@@ -510,9 +511,11 @@ mod tests {
 
     #[test]
     fn allows_read_of_normal_file() {
-        assert!(Denylist::check_path("/var/www/index.html", PathAccess::Read)
-            .expect("no error")
-            .is_none());
+        assert!(
+            Denylist::check_path("/var/www/index.html", PathAccess::Read)
+                .expect("no error")
+                .is_none()
+        );
     }
 
     #[test]

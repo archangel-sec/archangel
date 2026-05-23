@@ -156,8 +156,7 @@ pub fn untrusted_block(
 #[cfg(test)]
 mod tests {
     use super::{
-        sanitize_untrusted, trusted_line, untrusted_block, Block, Palette,
-        MAX_UNTRUSTED_BYTES,
+        sanitize_untrusted, trusted_line, untrusted_block, Block, Palette, MAX_UNTRUSTED_BYTES,
     };
 
     #[test]

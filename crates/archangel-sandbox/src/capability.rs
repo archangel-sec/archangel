@@ -86,8 +86,7 @@ mod tests {
         assert!(set.is_empty());
         assert!(set.capabilities().is_empty());
 
-        let resolved = CapabilitySet::resolve(Vec::<String>::new())
-            .expect("empty list resolves");
+        let resolved = CapabilitySet::resolve(Vec::<String>::new()).expect("empty list resolves");
         assert!(resolved.is_empty());
     }
 
@@ -117,8 +116,7 @@ mod tests {
 
     #[test]
     fn duplicates_collapse_deterministically() {
-        let set = CapabilitySet::resolve(["CAP_KILL", "kill", "CAP_KILL"])
-            .expect("resolves");
+        let set = CapabilitySet::resolve(["CAP_KILL", "kill", "CAP_KILL"]).expect("resolves");
         assert_eq!(set.names(), vec!["CAP_KILL"]);
         assert_eq!(set.capabilities(), vec![Capability::CAP_KILL]);
     }

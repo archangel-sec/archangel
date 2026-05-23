@@ -187,8 +187,7 @@ pub struct Config {
 impl Config {
     /// Parse from a TOML string and validate (fail-closed).
     pub fn from_toml(text: &str) -> Result<Self, ConfigError> {
-        let cfg: Self =
-            toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let cfg: Self = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -232,12 +231,9 @@ impl Config {
             )));
         }
 
-        if self.modes.default == OperationMode::Autonomous
-            && !self.modes.autonomous_allowed
-        {
+        if self.modes.default == OperationMode::Autonomous && !self.modes.autonomous_allowed {
             return Err(ConfigError::Invalid(
-                "modes.default = autonomous but modes.autonomous_allowed = false"
-                    .to_owned(),
+                "modes.default = autonomous but modes.autonomous_allowed = false".to_owned(),
             ));
         }
 
@@ -296,10 +292,7 @@ daemon_uid   = 1000
 
     #[test]
     fn relative_path_is_refused() {
-        let bad = MINIMAL.replace(
-            "/var/log/archangel/audit.log.jsonl",
-            "var/log/audit.jsonl",
-        );
+        let bad = MINIMAL.replace("/var/log/archangel/audit.log.jsonl", "var/log/audit.jsonl");
         assert!(Config::from_toml(&bad).is_err());
     }
 
@@ -312,9 +305,7 @@ daemon_uid   = 1000
 
     #[test]
     fn autonomous_default_without_optin_is_refused() {
-        let bad = format!(
-            "{MINIMAL}\n[modes]\ndefault=\"autonomous\"\nautonomous_allowed=false\n"
-        );
+        let bad = format!("{MINIMAL}\n[modes]\ndefault=\"autonomous\"\nautonomous_allowed=false\n");
         assert!(Config::from_toml(&bad).is_err());
     }
 

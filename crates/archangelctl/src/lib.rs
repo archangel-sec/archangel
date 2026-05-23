@@ -18,13 +18,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod error;
 /// Verify and display an audit log.
 pub mod audit_view;
 /// Signed control-plane client (boundary A).
 pub mod client;
 /// Host readiness preflight (`archangel-doctor`).
 pub mod doctor;
+mod error;
 /// Operator key material.
 pub mod keys;
 /// Secure terminal rendering.

@@ -173,7 +173,9 @@ mod tests {
 
     #[test]
     fn session_id_rejects_invalid_hex() {
-        assert!("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".parse::<SessionId>().is_err());
+        assert!("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+            .parse::<SessionId>()
+            .is_err());
     }
 
     #[test]

@@ -20,16 +20,15 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Error types.
-pub mod error;
 /// The signed, versioned envelope and length-prefixed framing.
 pub mod envelope;
+/// Error types.
+pub mod error;
 /// Request/response message types.
 pub mod message;
 
 pub use envelope::{
-    response_from_frame_body, response_to_frame, SignedEnvelope, MAX_FRAME_LEN,
-    PROTOCOL_VERSION,
+    response_from_frame_body, response_to_frame, SignedEnvelope, MAX_FRAME_LEN, PROTOCOL_VERSION,
 };
 pub use error::IpcError;
 pub use message::{ExecOutcome, ExecRequest, ExecResponse, RejectStage};

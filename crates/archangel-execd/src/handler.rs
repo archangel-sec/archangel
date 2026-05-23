@@ -168,16 +168,9 @@ impl<R: ActionRunner> Executor<R> {
     /// path) lives in `archangel-sandbox`; here we only map the manifest
     /// types and convert any error into a rejection. A bundle that cannot
     /// produce a plan never runs.
-    fn sandbox_gate(
-        request: &ExecRequest,
-        bundle: &VerifiedBundle,
-    ) -> Gate<SandboxPlan> {
+    fn sandbox_gate(request: &ExecRequest, bundle: &VerifiedBundle) -> Gate<SandboxPlan> {
         let reject = |msg: String| {
-            ExecResponse::rejected(
-                request.action_id,
-                RejectStage::SandboxRejected,
-                msg,
-            )
+            ExecResponse::rejected(request.action_id, RejectStage::SandboxRejected, msg)
         };
         let s = &bundle.manifest().sandbox;
         // `NetworkPolicy` is `#[non_exhaustive]`: an unrecognized future
@@ -187,11 +180,7 @@ impl<R: ActionRunner> Executor<R> {
             NetworkPolicy::None => NetworkMode::None,
             NetworkPolicy::Loopback => NetworkMode::Loopback,
             NetworkPolicy::Egress => NetworkMode::Egress,
-            other => {
-                return Err(reject(format!(
-                    "unsupported network policy {other:?}"
-                )))
-            }
+            other => return Err(reject(format!("unsupported network policy {other:?}"))),
         };
         let policy = SandboxPolicy {
             syscall_profile: s.syscall_profile.clone(),
@@ -223,22 +212,14 @@ impl<R: ActionRunner> Executor<R> {
             return Ok(None);
         }
         let reject = |reason: String| {
-            ExecResponse::rejected(
-                request.action_id,
-                RejectStage::SnapshotUnavailable,
-                reason,
-            )
+            ExecResponse::rejected(request.action_id, RejectStage::SnapshotUnavailable, reason)
         };
         let target = bundle
             .manifest()
             .sandbox
             .allowed_paths_rw
             .first()
-            .ok_or_else(|| {
-                reject(
-                    "mutating action declares no rw path to snapshot".to_owned(),
-                )
-            })?;
+            .ok_or_else(|| reject("mutating action declares no rw path to snapshot".to_owned()))?;
         let snap = self.snapshotter.as_ref().ok_or_else(|| {
             reject(
                 "action mutates persistent state but no snapshot backend \
@@ -307,10 +288,7 @@ impl<R: ActionRunner> Executor<R> {
 
     /// Steps 5–6: arg schema, then the v0.1 read-only invariant (from the
     /// verified bundle, not the daemon's claim).
-    fn check_args_and_read_only(
-        request: &ExecRequest,
-        bundle: &VerifiedBundle,
-    ) -> Gate<()> {
+    fn check_args_and_read_only(request: &ExecRequest, bundle: &VerifiedBundle) -> Gate<()> {
         bundle.validate_args(&request.args).map_err(|e| {
             ExecResponse::rejected(
                 request.action_id,
@@ -341,12 +319,16 @@ impl<R: ActionRunner> Executor<R> {
                 access: PathAccess::Read,
             })
             .collect();
-        intents.extend(manifest.sandbox.allowed_paths_rw.iter().map(|p| {
-            PathIntent {
-                path: p,
-                access: PathAccess::Write,
-            }
-        }));
+        intents.extend(
+            manifest
+                .sandbox
+                .allowed_paths_rw
+                .iter()
+                .map(|p| PathIntent {
+                    path: p,
+                    access: PathAccess::Write,
+                }),
+        );
         let commands = [manifest.payload.inline.as_str()];
         let decision = self.policy.evaluate(&PolicyRequest {
             profile: &request.profile,

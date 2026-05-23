@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 
 use nix::libc;
 use seccompiler::{
-    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
-    SeccompFilter, SeccompRule, TargetArch,
+    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+    SeccompRule, TargetArch,
 };
 
 use crate::SandboxError;
@@ -222,19 +222,12 @@ fn allowlist_for(profile: &str) -> Result<Vec<i64>, SandboxError> {
 /// (notably `AF_INET`/`AF_INET6`) matches neither rule and so hits the
 /// kill-on-mismatch default — no network socket can ever be created.
 fn socket_rules() -> Result<Vec<SeccompRule>, SandboxError> {
-    let compile = |e: seccompiler::BackendError| {
-        SandboxError::SeccompCompile(e.to_string())
-    };
+    let compile = |e: seccompiler::BackendError| SandboxError::SeccompCompile(e.to_string());
     let family = |af: libc::c_int| -> Result<SeccompRule, SandboxError> {
         // arg0 of socket(2) is `domain`, a 32-bit int.
         #[allow(clippy::cast_sign_loss)]
-        let cond = SeccompCondition::new(
-            0,
-            SeccompCmpArgLen::Dword,
-            SeccompCmpOp::Eq,
-            af as u64,
-        )
-        .map_err(compile)?;
+        let cond = SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, af as u64)
+            .map_err(compile)?;
         SeccompRule::new(vec![cond]).map_err(compile)
     };
     Ok(vec![family(libc::AF_UNIX)?, family(libc::AF_NETLINK)?])
@@ -242,9 +235,7 @@ fn socket_rules() -> Result<Vec<SeccompRule>, SandboxError> {
 
 /// The full rule map for a profile: every unconditional syscall mapped to an
 /// empty rule chain (allow), plus the argument-conditioned `socket` entry.
-fn rules_for(
-    profile: &str,
-) -> Result<BTreeMap<i64, Vec<SeccompRule>>, SandboxError> {
+fn rules_for(profile: &str) -> Result<BTreeMap<i64, Vec<SeccompRule>>, SandboxError> {
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = allowlist_for(profile)?
         .into_iter()
         .map(|s| (s, Vec::new()))
@@ -402,9 +393,7 @@ mod tests {
         // …but the compiled rule map carries it with non-empty (i.e.
         // argument-conditioned) rules restricting the address family.
         let rules = super::rules_for("inspect").expect("rules build");
-        let socket_rules = rules
-            .get(&libc::SYS_socket)
-            .expect("socket entry present");
+        let socket_rules = rules.get(&libc::SYS_socket).expect("socket entry present");
         assert_eq!(
             socket_rules.len(),
             2,

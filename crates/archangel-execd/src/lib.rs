@@ -75,10 +75,8 @@ mod tests {
     fn unique_dir() -> PathBuf {
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let p = std::env::temp_dir().join(format!(
-            "archangel-execd-test-{}-{n}",
-            std::process::id()
-        ));
+        let p =
+            std::env::temp_dir().join(format!("archangel-execd-test-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&p).expect("mkdir temp");
         p
     }
@@ -92,13 +90,7 @@ mod tests {
     }
 
     /// Write a signed `<name>.exec` (+ `.sig`) into `dir`.
-    fn write_bundle(
-        dir: &Path,
-        name: &str,
-        read_only: bool,
-        payload: &str,
-        args_schema: &str,
-    ) {
+    fn write_bundle(dir: &Path, name: &str, read_only: bool, payload: &str, args_schema: &str) {
         let sha: [u8; 32] = Sha256::digest(payload.as_bytes()).into();
         let manifest = format!(
             r#"
@@ -124,15 +116,12 @@ inline = "{payload}"
             hex(&sha)
         );
         let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
-        std::fs::write(dir.join(format!("{name}.exec")), &manifest)
-            .expect("write .exec");
-        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
-            .expect("write .exec.sig");
+        std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("write .exec");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig)).expect("write .exec.sig");
     }
 
     fn trust() -> OperatorTrust {
-        OperatorTrust::from_str(&hex(operator_key().verifying_key().as_bytes()))
-            .expect("trust")
+        OperatorTrust::from_str(&hex(operator_key().verifying_key().as_bytes())).expect("trust")
     }
 
     fn engine(exec_names: &[&str]) -> PolicyEngine {
@@ -177,8 +166,7 @@ inline = "{payload}"
         );
         let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
         std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("exec");
-        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
-            .expect("sig");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig)).expect("sig");
     }
 
     fn exec_with_snap(
@@ -227,7 +215,10 @@ inline = "{payload}"
         )
         .expect("verified");
         let r = ex.snapshot_gate(&minimal_request("mut"), &b);
-        assert!(r.is_err(), "mutating action with no snapshot backend must be refused");
+        assert!(
+            r.is_err(),
+            "mutating action with no snapshot backend must be refused"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -237,7 +228,9 @@ inline = "{payload}"
         write_mutating_bundle(&dir, "mut");
         let ex = exec_with_snap(
             dir.clone(),
-            Some(Box::new(archangel_snapshot::testutil::MockSnapshotter::working())),
+            Some(Box::new(
+                archangel_snapshot::testutil::MockSnapshotter::working(),
+            )),
         );
         let b = archangel_exec_format::VerifiedBundle::load(
             &dir.join("mut.exec"),
@@ -258,7 +251,9 @@ inline = "{payload}"
         write_mutating_bundle(&dir, "mut");
         let ex = exec_with_snap(
             dir.clone(),
-            Some(Box::new(archangel_snapshot::testutil::MockSnapshotter::failing())),
+            Some(Box::new(
+                archangel_snapshot::testutil::MockSnapshotter::failing(),
+            )),
         );
         let b = archangel_exec_format::VerifiedBundle::load(
             &dir.join("mut.exec"),
@@ -337,7 +332,10 @@ inline = "{payload}"
         let body = frame_body(&request("read-logs", 1, arg("service", "nginx")), &attacker);
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::SignatureInvalid, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::SignatureInvalid,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -347,7 +345,10 @@ inline = "{payload}"
         let dir = unique_dir();
         write_bundle(&dir, "read-logs", true, "echo hi", SVC_SCHEMA);
         let mut ex = executor(dir.clone(), &["read-logs"]);
-        let body = frame_body(&request("read-logs", 1, arg("service", "nginx")), &session_key());
+        let body = frame_body(
+            &request("read-logs", 1, arg("service", "nginx")),
+            &session_key(),
+        );
         assert!(matches!(
             ex.handle(&body).outcome,
             ExecOutcome::Completed { .. }
@@ -355,7 +356,10 @@ inline = "{payload}"
         // Byte-identical replay.
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::Replay, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::Replay,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -370,7 +374,10 @@ inline = "{payload}"
         );
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::BundleUnverified, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::BundleUnverified,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -380,10 +387,16 @@ inline = "{payload}"
         let dir = unique_dir();
         // No bundle written at all.
         let mut ex = executor(dir.clone(), &["read-logs"]);
-        let body = frame_body(&request("read-logs", 1, arg("service", "x")), &session_key());
+        let body = frame_body(
+            &request("read-logs", 1, arg("service", "x")),
+            &session_key(),
+        );
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::BundleUnverified, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::BundleUnverified,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -396,7 +409,10 @@ inline = "{payload}"
         let body = frame_body(&request("read-logs", 1, BTreeMap::new()), &session_key());
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::ArgRejected, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::ArgRejected,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -409,7 +425,10 @@ inline = "{payload}"
         let body = frame_body(&request("mutator", 1, arg("service", "x")), &session_key());
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::NotReadOnly, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::NotReadOnly,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -422,7 +441,10 @@ inline = "{payload}"
         let body = frame_body(&request("danger", 1, arg("service", "x")), &session_key());
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::DenylistHit, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::DenylistHit,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -433,10 +455,16 @@ inline = "{payload}"
         write_bundle(&dir, "read-logs", true, "echo hi", SVC_SCHEMA);
         // Allowlist permits a different exec only.
         let mut ex = executor(dir.clone(), &["something-else"]);
-        let body = frame_body(&request("read-logs", 1, arg("service", "x")), &session_key());
+        let body = frame_body(
+            &request("read-logs", 1, arg("service", "x")),
+            &session_key(),
+        );
         assert!(matches!(
             ex.handle(&body).outcome,
-            ExecOutcome::Rejected { stage: RejectStage::NotAllowlisted, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::NotAllowlisted,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -447,7 +475,10 @@ inline = "{payload}"
         let mut ex = executor(dir.clone(), &["read-logs"]);
         assert!(matches!(
             ex.handle(b"not a valid cbor envelope").outcome,
-            ExecOutcome::Rejected { stage: RejectStage::SignatureInvalid, .. }
+            ExecOutcome::Rejected {
+                stage: RejectStage::SignatureInvalid,
+                ..
+            }
         ));
         let _ = std::fs::remove_dir_all(&dir);
     }

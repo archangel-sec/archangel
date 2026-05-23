@@ -20,9 +20,7 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use archangel_ctl::CtlRequest;
-use archangelctl::{
-    audit_view, keys, render::Palette, setup, view, CtlClient, SetupOptions,
-};
+use archangelctl::{audit_view, keys, render::Palette, setup, view, CtlClient, SetupOptions};
 
 #[derive(Parser, Debug)]
 #[command(name = "archangelctl", version, about = "Operator CLI for archangel")]
@@ -136,11 +134,7 @@ fn make_client(secret: &Path, socket: PathBuf) -> Result<CtlClient, ExitCode> {
     }
 }
 
-async fn one_shot(
-    mut client: CtlClient,
-    req: CtlRequest,
-    palette: Palette,
-) -> ExitCode {
+async fn one_shot(mut client: CtlClient, req: CtlRequest, palette: Palette) -> ExitCode {
     match client.request(req).await {
         Ok(resp) => {
             println!("{}", view::render_response(palette, &resp));
@@ -195,11 +189,9 @@ async fn run_repl(mut client: CtlClient, palette: Palette) -> ExitCode {
                         approval_id: id.to_owned(),
                         action_digest: dig.to_owned(),
                     }),
-                    _ => last_pending.as_ref().map(|(id, dig)| {
-                        CtlRequest::Approve {
-                            approval_id: id.clone(),
-                            action_digest: dig.clone(),
-                        }
+                    _ => last_pending.as_ref().map(|(id, dig)| CtlRequest::Approve {
+                        approval_id: id.clone(),
+                        action_digest: dig.clone(),
                     }),
                 };
                 if let Some(r) = req {
@@ -215,8 +207,7 @@ async fn run_repl(mut client: CtlClient, palette: Palette) -> ExitCode {
                     .map(ToOwned::to_owned)
                     .or_else(|| last_pending.as_ref().map(|(i, _)| i.clone()));
                 if let Some(approval_id) = id {
-                    send(&mut client, CtlRequest::Reject { approval_id }, palette)
-                        .await
+                    send(&mut client, CtlRequest::Reject { approval_id }, palette).await
                 } else {
                     println!("nothing pending to reject");
                     None
@@ -243,8 +234,7 @@ async fn run_repl(mut client: CtlClient, palette: Palette) -> ExitCode {
                     action_digest,
                     ..
                 } => {
-                    last_pending =
-                        Some((approval_id.clone(), action_digest.clone()));
+                    last_pending = Some((approval_id.clone(), action_digest.clone()));
                 }
                 _ => last_pending = None,
             }
@@ -355,11 +345,9 @@ fn do_setup(
         let token = token_file.map_or_else(
             || {
                 if std::io::stdin().is_terminal() {
-                    read_secret_no_echo(
-                        "Anthropic API token (hidden, blank to skip): ",
-                    )
-                    .ok()
-                    .filter(|t| !t.is_empty())
+                    read_secret_no_echo("Anthropic API token (hidden, blank to skip): ")
+                        .ok()
+                        .filter(|t| !t.is_empty())
                 } else {
                     None
                 }
@@ -415,32 +403,28 @@ async fn main() -> ExitCode {
             token_file.as_deref(),
             palette,
         ),
-        Command::Init { secret, public } => {
-            match keys::init_operator_key(&secret, &public) {
-                Ok(pub_hex) => {
-                    println!("operator keypair created");
-                    println!("  secret: {} (mode 0600)", secret.display());
-                    println!("  public: {} = {pub_hex}", public.display());
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("init failed: {e}");
-                    ExitCode::from(1)
-                }
+        Command::Init { secret, public } => match keys::init_operator_key(&secret, &public) {
+            Ok(pub_hex) => {
+                println!("operator keypair created");
+                println!("  secret: {} (mode 0600)", secret.display());
+                println!("  public: {} = {pub_hex}", public.display());
+                ExitCode::SUCCESS
             }
-        }
-        Command::BundleSign { manifest, secret } => {
-            match keys::sign_bundle(&secret, &manifest) {
-                Ok(sig) => {
-                    println!("signed: {}", sig.display());
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("bundle-sign failed: {e}");
-                    ExitCode::from(1)
-                }
+            Err(e) => {
+                eprintln!("init failed: {e}");
+                ExitCode::from(1)
             }
-        }
+        },
+        Command::BundleSign { manifest, secret } => match keys::sign_bundle(&secret, &manifest) {
+            Ok(sig) => {
+                println!("signed: {}", sig.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("bundle-sign failed: {e}");
+                ExitCode::from(1)
+            }
+        },
         Command::Doctor { etc, operator_key } => {
             let report = archangelctl::doctor::diagnose(&etc, &operator_key);
             println!("{}", report.render(palette));
@@ -460,21 +444,17 @@ async fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
-        Command::Session { secret, socket } => {
-            match make_client(&secret, socket) {
-                Ok(c) => run_repl(c, palette).await,
-                Err(code) => code,
-            }
-        }
+        Command::Session { secret, socket } => match make_client(&secret, socket) {
+            Ok(c) => run_repl(c, palette).await,
+            Err(code) => code,
+        },
         Command::Ping { secret, socket } => match make_client(&secret, socket) {
             Ok(c) => one_shot(c, CtlRequest::Ping, palette).await,
             Err(code) => code,
         },
-        Command::PolicyReload { secret, socket } => {
-            match make_client(&secret, socket) {
-                Ok(c) => one_shot(c, CtlRequest::ReloadPolicy, palette).await,
-                Err(code) => code,
-            }
-        }
+        Command::PolicyReload { secret, socket } => match make_client(&secret, socket) {
+            Ok(c) => one_shot(c, CtlRequest::ReloadPolicy, palette).await,
+            Err(code) => code,
+        },
     }
 }

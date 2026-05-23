@@ -39,10 +39,7 @@ fn transport_err(context: &str, e: &impl core::fmt::Display) -> OrchestratorErro
 }
 
 impl ExecTransport for SocketExecTransport {
-    async fn send(
-        &self,
-        frame: Vec<u8>,
-    ) -> Result<archangel_ipc::ExecResponse, OrchestratorError> {
+    async fn send(&self, frame: Vec<u8>) -> Result<archangel_ipc::ExecResponse, OrchestratorError> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
             .map_err(|e| transport_err("connect exec socket", &e))?;
@@ -70,8 +67,7 @@ impl ExecTransport for SocketExecTransport {
             .await
             .map_err(|e| transport_err("read response body", &e))?;
 
-        response_from_frame_body(&body)
-            .map_err(|e| transport_err("decode response", &e))
+        response_from_frame_body(&body).map_err(|e| transport_err("decode response", &e))
     }
 }
 
@@ -163,6 +159,9 @@ mod tests {
     async fn connect_failure_is_a_transport_error() {
         let transport = SocketExecTransport::new(tmp_sock()); // nothing listening
         let r = transport.send(vec![0, 0, 0, 0]).await;
-        assert!(r.is_err(), "connecting to a dead socket must error, not hang");
+        assert!(
+            r.is_err(),
+            "connecting to a dead socket must error, not hang"
+        );
     }
 }

@@ -129,9 +129,7 @@ impl SignedCtlEnvelope {
 /// Responses are not signed in v0.1: the local socket is peer-credential
 /// authenticated and the reply goes back to the already-authenticated
 /// operator connection. Mutual signing is later hardening.
-pub fn response_to_frame(
-    response: &crate::message::CtlResponse,
-) -> Result<Vec<u8>, CtlError> {
+pub fn response_to_frame(response: &crate::message::CtlResponse) -> Result<Vec<u8>, CtlError> {
     let body = cbor_to_vec(response)?;
     let len = u32::try_from(body.len())
         .map_err(|_| CtlError::Framing("response too large".to_owned()))?;
@@ -142,8 +140,6 @@ pub fn response_to_frame(
 }
 
 /// Decode a [`crate::CtlResponse`] from a frame body.
-pub fn response_from_frame_body(
-    body: &[u8],
-) -> Result<crate::message::CtlResponse, CtlError> {
+pub fn response_from_frame_body(body: &[u8]) -> Result<crate::message::CtlResponse, CtlError> {
     cbor_from_slice(body)
 }

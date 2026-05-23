@@ -165,11 +165,7 @@ fn random_id() -> String {
 /// Digest binding the approval to the EXACT action: exec name + canonical
 /// args + the signed bundle's payload hash. The operator approves this;
 /// the daemon refuses if it does not match the stored action.
-fn action_digest(
-    exec: &str,
-    args: &BTreeMap<String, String>,
-    payload_sha256: &str,
-) -> String {
+fn action_digest(exec: &str, args: &BTreeMap<String, String>, payload_sha256: &str) -> String {
     let mut buf = Vec::new();
     buf.extend_from_slice(exec.as_bytes());
     buf.push(0);
@@ -255,8 +251,7 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
         untrusted: &[(&str, &str)],
     ) -> Result<TaskOutcome, OrchestratorError> {
         let builder = self.builder();
-        let request =
-            builder.build(&self.model, self.max_tokens, task, untrusted, &self.tools);
+        let request = builder.build(&self.model, self.max_tokens, task, untrusted, &self.tools);
 
         let mut prompt_digest = request.system.clone().unwrap_or_default();
         for m in &request.messages {
@@ -339,9 +334,7 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
         let audit_decision = match &decision {
             PolicyDecision::Allow => Decision::Allow,
             PolicyDecision::RequireApproval { .. } => Decision::RequireApproval,
-            PolicyDecision::Deny { .. } | PolicyDecision::NotAllowed { .. } => {
-                Decision::Deny
-            }
+            PolicyDecision::Deny { .. } | PolicyDecision::NotAllowed { .. } => Decision::Deny,
         };
         self.audit.append(AuditEvent::PolicyDecision {
             session_id: sid,
@@ -366,7 +359,8 @@ impl<B: LlmBackend, T: ExecTransport, S: DurableSink> Orchestrator<B, T, S> {
 
         match &decision {
             PolicyDecision::Allow => {
-                self.dispatch(sid, action_id, exec, &args_sha256, frame).await
+                self.dispatch(sid, action_id, exec, &args_sha256, frame)
+                    .await
             }
             // Layers #13/#14: allowlisted but a human must approve. The
             // signed frame is stashed; nothing runs until `approve`.
@@ -666,8 +660,7 @@ mod tests {
     use archangel_execd::{ActionRunner, ExecLimits, Executor, RunContext, RunResult};
     use archangel_ipc::ExecResponse;
     use archangel_llm::{
-        BackendCapability, CompletionRequest, CompletionResponse, LlmBackend, LlmError,
-        Usage,
+        BackendCapability, CompletionRequest, CompletionResponse, LlmBackend, LlmError, Usage,
     };
     use archangel_policy::{Allowlist, PolicyEngine};
 
@@ -726,17 +719,10 @@ inline = "{payload}"
         );
         let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
         std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("write exec");
-        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
-            .expect("write sig");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig)).expect("write sig");
     }
 
-    fn write_bundle_risk(
-        dir: &Path,
-        name: &str,
-        read_only: bool,
-        payload: &str,
-        risk: &str,
-    ) {
+    fn write_bundle_risk(dir: &Path, name: &str, read_only: bool, payload: &str, risk: &str) {
         let sha: [u8; 32] = Sha256::digest(payload.as_bytes()).into();
         let manifest = format!(
             "\n[meta]\nname = \"{name}\"\nversion = \"1.0.0\"\nrisk = \"{risk}\"\n\
@@ -749,13 +735,11 @@ inline = "{payload}"
         );
         let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
         std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("exec");
-        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig))
-            .expect("sig");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig)).expect("sig");
     }
 
     fn trust() -> OperatorTrust {
-        OperatorTrust::from_str(&hex(operator_key().verifying_key().as_bytes()))
-            .expect("trust")
+        OperatorTrust::from_str(&hex(operator_key().verifying_key().as_bytes())).expect("trust")
     }
 
     fn policy(allow: &[&str]) -> PolicyEngine {
@@ -780,10 +764,7 @@ inline = "{payload}"
         fn name(&self) -> &'static str {
             "mock"
         }
-        async fn complete(
-            &self,
-            _req: CompletionRequest,
-        ) -> Result<CompletionResponse, LlmError> {
+        async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
             Ok(CompletionResponse {
                 text: self.reply.clone(),
                 model: "mock-1".to_owned(),
@@ -814,10 +795,7 @@ inline = "{payload}"
         executor: Mutex<Executor<MockRunner>>,
     }
     impl ExecTransport for InProcess {
-        async fn send(
-            &self,
-            frame: Vec<u8>,
-        ) -> Result<ExecResponse, OrchestratorError> {
+        async fn send(&self, frame: Vec<u8>) -> Result<ExecResponse, OrchestratorError> {
             // Strip the 4-byte length prefix exactly like the socket server.
             let body = frame
                 .get(4..)
@@ -1111,7 +1089,10 @@ inline = "{payload}"
             assert!(matches!(&r, TaskOutcome::Denied { stage, .. } if stage == "approval"));
         }
         let audit = String::from_utf8(buf).expect("utf8");
-        assert!(!audit.contains("exec_completed"), "digest mismatch must not run");
+        assert!(
+            !audit.contains("exec_completed"),
+            "digest mismatch must not run"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1129,10 +1110,7 @@ inline = "{payload}"
         o.start().expect("start");
         let p = o.run_task("inspect", &[]).await.expect("ok");
         let (id, dig) = pending_of(&p);
-        assert!(matches!(
-            o.reject(&id),
-            TaskOutcome::Denied { .. }
-        ));
+        assert!(matches!(o.reject(&id), TaskOutcome::Denied { .. }));
         assert!(matches!(
             o.approve(&id, &dig).await.expect("after reject"),
             TaskOutcome::Denied { .. }
@@ -1169,7 +1147,10 @@ inline = "{payload}"
             let p = o.run_task("do it", &[]).await.expect("ok");
             assert!(matches!(
                 &p,
-                TaskOutcome::ApprovalRequired { two_person: true, .. }
+                TaskOutcome::ApprovalRequired {
+                    two_person: true,
+                    ..
+                }
             ));
             let (id, dig) = pending_of(&p);
             let r = o.approve(&id, &dig).await.expect("approve");

@@ -62,9 +62,8 @@ impl Allowlist {
     /// the list all return `false`.
     #[must_use]
     pub fn is_allowed(&self, profile: &str, exec: &str, mode: OperationMode) -> bool {
-        self.profile(profile).is_some_and(|p| {
-            p.mode == mode && p.allowed_exec.iter().any(|e| e == exec)
-        })
+        self.profile(profile)
+            .is_some_and(|p| p.mode == mode && p.allowed_exec.iter().any(|e| e == exec))
     }
 }
 

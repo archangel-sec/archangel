@@ -33,17 +33,17 @@ use tracing::{error, info, warn};
 
 use archangel_audit::{AuditKeypair, AuditLog};
 use archangel_core::{OperationMode, SecretString};
+use archangel_ctl::SignedCtlEnvelope;
 use archangel_exec_format::{OperatorTrust, VerifiedBundle};
 use archangel_llm::{
-    AnthropicBackend, AnthropicConfig, BackendCapability, CompletionRequest,
-    CompletionResponse, LlmBackend, LlmError, OllamaBackend, OllamaConfig,
+    AnthropicBackend, AnthropicConfig, BackendCapability, CompletionRequest, CompletionResponse,
+    LlmBackend, LlmError, OllamaBackend, OllamaConfig,
 };
 use archangel_policy::{Allowlist, PolicyEngine};
 use archangeld::{
-    prompt::ToolSpec, server::handle_ctl_frame, server::CtlReplayGuard, Config,
-    Orchestrator, Session, SocketExecTransport,
+    prompt::ToolSpec, server::handle_ctl_frame, server::CtlReplayGuard, Config, Orchestrator,
+    Session, SocketExecTransport,
 };
-use archangel_ctl::SignedCtlEnvelope;
 
 #[derive(Parser, Debug)]
 #[command(name = "archangeld", version, about = "Archangel daemon (T3)")]
@@ -98,10 +98,7 @@ impl LlmBackend for AnyBackend {
             Self::Ollama(_) => "ollama",
         }
     }
-    async fn complete(
-        &self,
-        req: CompletionRequest,
-    ) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         match self {
             Self::Anthropic(b) => b.complete(req).await,
             Self::Ollama(b) => b.complete(req).await,
@@ -250,28 +247,26 @@ fn discover_tools(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let cfg = Config::load(&args.config)
-        .with_context(|| format!("loading {}", args.config.display()))?;
+    let cfg =
+        Config::load(&args.config).with_context(|| format!("loading {}", args.config.display()))?;
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let backend = build_backend(&cfg)?;
-    let trust = OperatorTrust::load(&cfg.daemon.trust_store)
-        .context("loading operator trust store")?;
+    let trust =
+        OperatorTrust::load(&cfg.daemon.trust_store).context("loading operator trust store")?;
     if trust.is_empty() {
         warn!("operator trust store is empty: every .exec bundle will be rejected");
     }
-    let allowlist =
-        Allowlist::load(&cfg.daemon.allowlist).context("loading allowlist")?;
+    let allowlist = Allowlist::load(&cfg.daemon.allowlist).context("loading allowlist")?;
     let policy = PolicyEngine::new(allowlist);
 
-    let op_pub_hex = std::fs::read_to_string(&cfg.daemon.operator_pubkey)
-        .context("read operator pubkey")?;
+    let op_pub_hex =
+        std::fs::read_to_string(&cfg.daemon.operator_pubkey).context("read operator pubkey")?;
     let op_bytes: [u8; 32] = decode_hex(&op_pub_hex)?
         .try_into()
         .map_err(|_| anyhow!("operator pubkey must be 32 bytes"))?;
@@ -312,7 +307,9 @@ async fn main() -> anyhow::Result<()> {
         cfg.llm.max_tokens,
         tools,
     );
-    orchestrator.start().map_err(|e| anyhow!("audit start: {e}"))?;
+    orchestrator
+        .start()
+        .map_err(|e| anyhow!("audit start: {e}"))?;
 
     // Publish the session public key for the executor (architecture §4.2:
     // rotated each daemon restart). The executor reads this file per
@@ -323,7 +320,9 @@ async fn main() -> anyhow::Result<()> {
         "session public key published to {} ({session_pub_hex})",
         cfg.daemon.session_pub.display()
     );
-    eprintln!("audit log public key (pin this for `archangelctl audit-tail --key`): {audit_pub_hex}");
+    eprintln!(
+        "audit log public key (pin this for `archangelctl audit-tail --key`): {audit_pub_hex}"
+    );
 
     if cfg.sockets.control.exists() {
         std::fs::remove_file(&cfg.sockets.control).ok();
@@ -331,8 +330,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(parent) = cfg.sockets.control.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let listener =
-        UnixListener::bind(&cfg.sockets.control).context("bind control socket")?;
+    let listener = UnixListener::bind(&cfg.sockets.control).context("bind control socket")?;
     std::fs::set_permissions(
         &cfg.sockets.control,
         std::fs::Permissions::from_mode(cfg.sockets.control_mode),
@@ -376,9 +374,7 @@ async fn serve_ctl_loop(
             }
         }
 
-        if let Err(e) =
-            serve_connection(&mut stream, &operator_pub, &mut orchestrator).await
-        {
+        if let Err(e) = serve_connection(&mut stream, &operator_pub, &mut orchestrator).await {
             warn!(error = %e, "control connection ended with error");
         }
     }
@@ -390,18 +386,23 @@ async fn serve_connection(
     orchestrator: &mut Orchestrator<AnyBackend, SocketExecTransport, std::fs::File>,
 ) -> anyhow::Result<()> {
     let mut prefix = [0u8; 4];
-    stream.read_exact(&mut prefix).await.context("read length")?;
-    let len = SignedCtlEnvelope::frame_len(prefix)
-        .map_err(|e| anyhow!("frame length rejected: {e}"))?;
+    stream
+        .read_exact(&mut prefix)
+        .await
+        .context("read length")?;
+    let len =
+        SignedCtlEnvelope::frame_len(prefix).map_err(|e| anyhow!("frame length rejected: {e}"))?;
     let mut body = vec![0u8; len];
     stream.read_exact(&mut body).await.context("read body")?;
 
     // One request per connection in v0.1; a fresh replay guard per
     // connection (seq is per-connection).
     let mut guard = CtlReplayGuard::new();
-    let response =
-        handle_ctl_frame(&body, operator_pub, &mut guard, orchestrator).await;
-    stream.write_all(&response).await.context("write response")?;
+    let response = handle_ctl_frame(&body, operator_pub, &mut guard, orchestrator).await;
+    stream
+        .write_all(&response)
+        .await
+        .context("write response")?;
     stream.flush().await.context("flush")?;
     Ok(())
 }

@@ -41,8 +41,7 @@ pub struct SignedEnvelope {
 
 fn cbor_to_vec<T: Serialize>(value: &T) -> Result<Vec<u8>, IpcError> {
     let mut buf = Vec::new();
-    ciborium::into_writer(value, &mut buf)
-        .map_err(|e| IpcError::Codec(e.to_string()))?;
+    ciborium::into_writer(value, &mut buf).map_err(|e| IpcError::Codec(e.to_string()))?;
     Ok(buf)
 }
 
@@ -53,10 +52,7 @@ fn cbor_from_slice<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, IpcE
 impl SignedEnvelope {
     /// Seal a request: CBOR-encode it, sign those exact bytes with the
     /// per-session signing key, and wrap in a versioned envelope.
-    pub fn seal(
-        request: &ExecRequest,
-        signing_key: &SigningKey,
-    ) -> Result<Self, IpcError> {
+    pub fn seal(request: &ExecRequest, signing_key: &SigningKey) -> Result<Self, IpcError> {
         let request_bytes = cbor_to_vec(request)?;
         let signature = signing_key.sign(&request_bytes).to_bytes().to_vec();
         Ok(Self {
@@ -128,9 +124,7 @@ impl SignedEnvelope {
 /// Responses are not signed in v0.1: the local socket is peer-credential
 /// authenticated and the reply goes back to the already-authenticated
 /// daemon. Mutual signing is later hardening.
-pub fn response_to_frame(
-    response: &crate::message::ExecResponse,
-) -> Result<Vec<u8>, IpcError> {
+pub fn response_to_frame(response: &crate::message::ExecResponse) -> Result<Vec<u8>, IpcError> {
     let body = cbor_to_vec(response)?;
     let len = u32::try_from(body.len())
         .map_err(|_| IpcError::Framing("response too large".to_owned()))?;
@@ -141,8 +135,6 @@ pub fn response_to_frame(
 }
 
 /// Decode an [`ExecResponse`] from a frame body.
-pub fn response_from_frame_body(
-    body: &[u8],
-) -> Result<crate::message::ExecResponse, IpcError> {
+pub fn response_from_frame_body(body: &[u8]) -> Result<crate::message::ExecResponse, IpcError> {
     cbor_from_slice(body)
 }

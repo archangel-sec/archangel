@@ -119,10 +119,7 @@ impl LlmBackend for OllamaBackend {
         "ollama"
     }
 
-    async fn complete(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let mut messages: Vec<WireMessage<'_>> = Vec::new();
         if let Some(system) = request.system.as_deref() {
             messages.push(WireMessage {
@@ -152,8 +149,8 @@ impl LlmBackend for OllamaBackend {
 
         let bytes = http::send_capped(http_req, self.max_response_bytes).await?;
 
-        let decoded: WireResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| LlmError::Decode(e.to_string()))?;
+        let decoded: WireResponse =
+            serde_json::from_slice(&bytes).map_err(|e| LlmError::Decode(e.to_string()))?;
 
         let text = decoded.message.map(|m| m.content).unwrap_or_default();
 

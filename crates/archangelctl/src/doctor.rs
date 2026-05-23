@@ -51,10 +51,7 @@ impl Report {
     /// `true` iff no check failed (warnings are tolerated).
     #[must_use]
     pub fn is_ok(&self) -> bool {
-        !self
-            .checks
-            .iter()
-            .any(|c| c.severity == Severity::Fail)
+        !self.checks.iter().any(|c| c.severity == Severity::Fail)
     }
 
     /// Render the report for the terminal.
@@ -82,12 +79,15 @@ impl Report {
         let summary = if self.is_ok() {
             "host looks ready (review any WARN lines)".to_owned()
         } else {
-            "host is NOT ready — resolve every FAIL before running archangel"
-                .to_owned()
+            "host is NOT ready — resolve every FAIL before running archangel".to_owned()
         };
         out.push_str(&trusted_line(
             palette,
-            if self.is_ok() { Block::Status } else { Block::Error },
+            if self.is_ok() {
+                Block::Status
+            } else {
+                Block::Error
+            },
             &summary,
         ));
         out
@@ -110,7 +110,11 @@ pub fn diagnose(etc_dir: &Path, operator_key: &Path) -> Report {
     match std::fs::read_to_string("/proc/sys/kernel/osrelease") {
         Ok(rel) => match kernel_major_minor(rel.trim()) {
             Some((maj, min)) if (maj, min) >= (5, 10) => {
-                r.push("kernel", Severity::Pass, format!("{} (>= 5.10)", rel.trim()));
+                r.push(
+                    "kernel",
+                    Severity::Pass,
+                    format!("{} (>= 5.10)", rel.trim()),
+                );
             }
             Some((maj, min)) => r.push(
                 "kernel",
@@ -144,7 +148,11 @@ pub fn diagnose(etc_dir: &Path, operator_key: &Path) -> Report {
 
     match std::fs::read_to_string("/proc/sys/kernel/unprivileged_userns_clone") {
         Ok(v) if v.trim() == "1" => {
-            r.push("user namespaces", Severity::Pass, "unprivileged userns enabled");
+            r.push(
+                "user namespaces",
+                Severity::Pass,
+                "unprivileged userns enabled",
+            );
         }
         Ok(_) => r.push(
             "user namespaces",
@@ -159,7 +167,11 @@ pub fn diagnose(etc_dir: &Path, operator_key: &Path) -> Report {
     }
 
     if etc_dir.is_dir() {
-        r.push("config dir", Severity::Pass, format!("{} present", etc_dir.display()));
+        r.push(
+            "config dir",
+            Severity::Pass,
+            format!("{} present", etc_dir.display()),
+        );
     } else {
         r.push(
             "config dir",

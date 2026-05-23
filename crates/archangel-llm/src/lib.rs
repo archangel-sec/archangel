@@ -17,12 +17,12 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// The `LlmBackend` trait.
+pub mod backend;
 /// Error types.
 pub mod error;
 /// Backend-neutral request/response types.
 pub mod types;
-/// The `LlmBackend` trait.
-pub mod backend;
 
 #[cfg(any(feature = "backend-anthropic", feature = "backend-ollama"))]
 mod http;
@@ -36,9 +36,7 @@ pub mod ollama;
 
 pub use backend::LlmBackend;
 pub use error::LlmError;
-pub use types::{
-    BackendCapability, CompletionRequest, CompletionResponse, Message, Role, Usage,
-};
+pub use types::{BackendCapability, CompletionRequest, CompletionResponse, Message, Role, Usage};
 
 #[cfg(feature = "backend-anthropic")]
 pub use anthropic::{AnthropicBackend, AnthropicConfig};
@@ -163,7 +161,10 @@ mod tests {
 
         #[tokio::test]
         async fn oversized_response_is_rejected() {
-            let big = format!(r#"{{"model":"x","message":{{"content":"{}"}}}}"#, "A".repeat(5000));
+            let big = format!(
+                r#"{{"model":"x","message":{{"content":"{}"}}}}"#,
+                "A".repeat(5000)
+            );
             let url = one_shot("200 OK", big).await;
             let backend = backend_at(url, Some(256));
             let err = backend.complete(req()).await.expect_err("must reject");

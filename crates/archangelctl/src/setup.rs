@@ -19,12 +19,7 @@ use std::path::{Path, PathBuf};
 use archangel_config::Config;
 use archangel_exec_format::{OperatorTrust, VerifiedBundle};
 
-use crate::{
-    doctor,
-    error::CtlError,
-    keys,
-    render::Palette,
-};
+use crate::{doctor, error::CtlError, keys, render::Palette};
 
 /// Inputs for [`run`].
 #[derive(Debug, Clone)]
@@ -151,10 +146,7 @@ pub fn render_allowlist(read_only_execs: &[String]) -> String {
 /// Decide the new `operators.pubkeys` content. Returns `None` if the
 /// operator key is already present (idempotent; never drops other keys).
 #[must_use]
-pub fn operators_pubkeys_update(
-    existing: Option<&str>,
-    operator_pub_hex: &str,
-) -> Option<String> {
+pub fn operators_pubkeys_update(existing: Option<&str>, operator_pub_hex: &str) -> Option<String> {
     let key = operator_pub_hex.trim();
     existing.map_or_else(
         || Some(format!("{key}  operator\n")),
@@ -241,9 +233,8 @@ pub fn run(opts: &SetupOptions, palette: Palette) -> Result<String, CtlError> {
         None => log.push("operators.pubkeys: operator key already trusted".into()),
         Some(content) => {
             if operators_path.exists() {
-                std::fs::write(&operators_path, content).map_err(|e| {
-                    CtlError::Key(format!("update operators.pubkeys: {e}"))
-                })?;
+                std::fs::write(&operators_path, content)
+                    .map_err(|e| CtlError::Key(format!("update operators.pubkeys: {e}")))?;
                 log.push("operators.pubkeys: added operator key".into());
             } else {
                 write_new(&operators_path, &content, 0o640)?;
@@ -291,16 +282,14 @@ pub fn run(opts: &SetupOptions, palette: Palette) -> Result<String, CtlError> {
         log.push("archangel.toml: kept existing (not overwritten)".into());
     } else {
         let rendered = render_config(opts);
-        Config::from_toml(&rendered).map_err(|e| {
-            CtlError::Key(format!("generated config failed validation: {e}"))
-        })?;
+        Config::from_toml(&rendered)
+            .map_err(|e| CtlError::Key(format!("generated config failed validation: {e}")))?;
         write_new(&cfg_path, &rendered, 0o640)?;
         log.push("archangel.toml: created and validated".into());
     }
 
     // 6. Validate whatever config is now in place (fail-closed).
-    Config::load(&cfg_path)
-        .map_err(|e| CtlError::Key(format!("config does not validate: {e}")))?;
+    Config::load(&cfg_path).map_err(|e| CtlError::Key(format!("config does not validate: {e}")))?;
 
     // 7. Preflight.
     let report = doctor::diagnose(&opts.etc, &sk);
@@ -324,8 +313,8 @@ mod tests {
     use crate::render::Palette;
 
     use super::{
-        operators_pubkeys_update, render_allowlist, render_config, run,
-        uid_from_passwd, uid_from_proc_status, SetupOptions,
+        operators_pubkeys_update, render_allowlist, render_config, run, uid_from_passwd,
+        uid_from_proc_status, SetupOptions,
     };
 
     fn tmp() -> std::path::PathBuf {
@@ -356,7 +345,10 @@ mod tests {
             Some(1000)
         );
         assert_eq!(
-            uid_from_passwd("root:x:0:0::/root:/bin/sh\narchangel:x:996:996::/n:/usr/sbin/nologin\n", "archangel"),
+            uid_from_passwd(
+                "root:x:0:0::/root:/bin/sh\narchangel:x:996:996::/n:/usr/sbin/nologin\n",
+                "archangel"
+            ),
             Some(996)
         );
         assert_eq!(uid_from_passwd("root:x:0:0::/:/sh\n", "archangel"), None);
@@ -395,8 +387,7 @@ mod tests {
         );
         // Different key present → appended, old kept.
         let other = "bb".repeat(32);
-        let updated =
-            operators_pubkeys_update(Some(&format!("{other}  bob\n")), &k).expect("add");
+        let updated = operators_pubkeys_update(Some(&format!("{other}  bob\n")), &k).expect("add");
         assert!(updated.contains(&other), "must not drop existing keys");
         assert!(updated.contains(&k));
     }
@@ -417,8 +408,7 @@ mod tests {
         assert!(r1.contains("operator key: created"));
         assert!(r1.contains("archangel.toml: created"));
         // Capture the operator key bytes; a second run must not change it.
-        let key1 =
-            std::fs::read(d.join("trust/operator.key")).expect("key exists");
+        let key1 = std::fs::read(d.join("trust/operator.key")).expect("key exists");
         let r2 = run(&o, Palette::fixed(false)).expect("second run");
         assert!(r2.contains("kept existing"));
         let key2 = std::fs::read(d.join("trust/operator.key")).expect("key");

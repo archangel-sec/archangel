@@ -59,8 +59,7 @@ pub fn fs_type_for<'a>(mounts: &'a str, path: &str) -> Option<&'a str> {
     let mut best: Option<(&str, &str)> = None; // (mountpoint, fstype)
     for line in mounts.lines() {
         let mut f = line.split_whitespace();
-        let (Some(_dev), Some(mp), Some(fstype)) = (f.next(), f.next(), f.next())
-        else {
+        let (Some(_dev), Some(mp), Some(fstype)) = (f.next(), f.next(), f.next()) else {
             continue;
         };
         if is_path_prefix(mp, path) {
@@ -97,9 +96,7 @@ pub fn detect_for(target: &Path, snapshot_root: PathBuf) -> Option<Box<dyn Snaps
 }
 
 fn run(cmd: &mut Command) -> Result<(), SnapshotError> {
-    let out = cmd
-        .output()
-        .map_err(|e| SnapshotError::Io(e.to_string()))?;
+    let out = cmd.output().map_err(|e| SnapshotError::Io(e.to_string()))?;
     if out.status.success() {
         Ok(())
     } else {

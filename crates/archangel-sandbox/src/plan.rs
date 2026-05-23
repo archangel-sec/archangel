@@ -93,9 +93,7 @@ pub struct SandboxPlan {
 /// but layer #11 still does not trust the path it declares: traversal,
 /// relative paths, NUL, and empty components are refused.
 fn validate_path(p: &str) -> Result<(), SandboxError> {
-    let bad = |m: &str| {
-        Err(SandboxError::InvalidProfile(format!("path {p:?}: {m}")))
-    };
+    let bad = |m: &str| Err(SandboxError::InvalidProfile(format!("path {p:?}: {m}")));
     if p.is_empty() {
         return bad("empty");
     }
@@ -108,7 +106,7 @@ fn validate_path(p: &str) -> Result<(), SandboxError> {
     if p.contains('\0') {
         return bad("contains NUL");
     }
-    if p.split('/').any(|c| c == ".." ) {
+    if p.split('/').any(|c| c == "..") {
         return bad("contains a `..` component");
     }
     Ok(())
@@ -270,10 +268,7 @@ mod tests {
             syscall_profile: "nope".to_owned(),
             ..base()
         };
-        assert!(matches!(
-            p.plan(),
-            Err(SandboxError::UnknownProfile(_))
-        ));
+        assert!(matches!(p.plan(), Err(SandboxError::UnknownProfile(_))));
     }
 
     #[test]
@@ -282,10 +277,7 @@ mod tests {
             capabilities: vec!["CAP_NOPE".to_owned()],
             ..base()
         };
-        assert!(matches!(
-            p.plan(),
-            Err(SandboxError::UnknownCapability(_))
-        ));
+        assert!(matches!(p.plan(), Err(SandboxError::UnknownCapability(_))));
     }
 
     #[test]
@@ -310,10 +302,7 @@ mod tests {
             ..base()
         };
         let plan = p.plan().expect("valid limits");
-        assert_eq!(
-            plan.cpu_max().unwrap().cgroup_value(),
-            "10000 100000"
-        );
+        assert_eq!(plan.cpu_max().unwrap().cgroup_value(), "10000 100000");
         assert_eq!(plan.memory_max().unwrap().bytes(), 128 * 1024 * 1024);
     }
 
@@ -337,10 +326,7 @@ mod tests {
             allowed_paths_rw: vec!["/var/lib/\0evil".to_owned()],
             ..base()
         };
-        assert!(matches!(
-            p.plan(),
-            Err(SandboxError::InvalidProfile(_))
-        ));
+        assert!(matches!(p.plan(), Err(SandboxError::InvalidProfile(_))));
     }
 
     #[test]

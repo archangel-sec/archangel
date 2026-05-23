@@ -140,10 +140,8 @@ impl ActionRunner for BashRunner {
         let cap = ctx.max_output;
         let out_pipe = child.stdout.take();
         let err_pipe = child.stderr.take();
-        let out_handle =
-            thread::spawn(move || out_pipe.map(|p| read_capped(p, cap)));
-        let err_handle =
-            thread::spawn(move || err_pipe.map(|p| read_capped(p, cap)));
+        let out_handle = thread::spawn(move || out_pipe.map(|p| read_capped(p, cap)));
+        let err_handle = thread::spawn(move || err_pipe.map(|p| read_capped(p, cap)));
 
         // Poll try_wait until the deadline; kill on timeout.
         let deadline = started + ctx.timeout;
@@ -173,9 +171,7 @@ impl ActionRunner for BashRunner {
             .flatten()
             .unwrap_or_else(|| (Vec::new(), false));
 
-        let exit_code = status
-            .and_then(|s| s.code())
-            .unwrap_or(-1);
+        let exit_code = status.and_then(|s| s.code()).unwrap_or(-1);
 
         RunResult {
             exit_code,
@@ -197,11 +193,7 @@ mod tests {
 
     use super::{ActionRunner, BashRunner, RunContext};
 
-    fn ctx<'a>(
-        script: &'a str,
-        args: &'a BTreeMap<String, String>,
-        secs: u64,
-    ) -> RunContext<'a> {
+    fn ctx<'a>(script: &'a str, args: &'a BTreeMap<String, String>, secs: u64) -> RunContext<'a> {
         RunContext {
             script,
             args,

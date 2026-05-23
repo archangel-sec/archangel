@@ -16,9 +16,7 @@
 
 use std::collections::HashSet;
 
-use archangel_ctl::{
-    response_to_frame, CtlOutcome, CtlRequest, CtlResponse, SignedCtlEnvelope,
-};
+use archangel_ctl::{response_to_frame, CtlOutcome, CtlRequest, CtlResponse, SignedCtlEnvelope};
 use ed25519_dalek::VerifyingKey;
 
 use crate::orchestrator::{ExecTransport, Orchestrator, TaskOutcome};
@@ -47,9 +45,7 @@ pub trait CtlService {
     fn reject(&mut self, approval_id: &str) -> CtlOutcome;
 
     /// Reload the signed policy (v0.1: not yet supported — honest no).
-    fn reload_policy(
-        &mut self,
-    ) -> impl core::future::Future<Output = (bool, String)>;
+    fn reload_policy(&mut self) -> impl core::future::Future<Output = (bool, String)>;
 }
 
 fn outcome_to_ctl(o: TaskOutcome) -> CtlOutcome {
@@ -91,9 +87,7 @@ fn outcome_to_ctl(o: TaskOutcome) -> CtlOutcome {
 // named explicitly to disambiguate it from this trait's `run_task` of the
 // same name — `Self::run_task` would resolve ambiguously.
 #[allow(clippy::use_self)]
-impl<B: LlmBackend, T: ExecTransport, S: DurableSink> CtlService
-    for Orchestrator<B, T, S>
-{
+impl<B: LlmBackend, T: ExecTransport, S: DurableSink> CtlService for Orchestrator<B, T, S> {
     async fn run_task(&mut self, task: &str, context: &[(String, String)]) -> CtlOutcome {
         let borrowed: Vec<(&str, &str)> = context
             .iter()
@@ -203,9 +197,7 @@ pub async fn handle_ctl_frame<Svc: CtlService>(
             approval_id,
             action_digest,
         } => CtlResponse::Task(service.approve(&approval_id, &action_digest).await),
-        CtlRequest::Reject { approval_id } => {
-            CtlResponse::Task(service.reject(&approval_id))
-        }
+        CtlRequest::Reject { approval_id } => CtlResponse::Task(service.reject(&approval_id)),
         CtlRequest::ReloadPolicy => {
             let (ok, detail) = service.reload_policy().await;
             CtlResponse::PolicyReloaded { ok, detail }
@@ -218,8 +210,7 @@ pub async fn handle_ctl_frame<Svc: CtlService>(
 #[allow(clippy::expect_used)]
 mod tests {
     use archangel_ctl::{
-        response_from_frame_body, CtlBody, CtlOutcome, CtlRequest, CtlResponse,
-        SignedCtlEnvelope,
+        response_from_frame_body, CtlBody, CtlOutcome, CtlRequest, CtlResponse, SignedCtlEnvelope,
     };
     use ed25519_dalek::SigningKey;
 

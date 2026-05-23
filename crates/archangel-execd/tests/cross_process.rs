@@ -108,7 +108,10 @@ async fn real_execd_runs_a_signed_read_only_bundle() {
     let operators_file = tmp.join("operators.pubkeys");
     std::fs::write(
         &operators_file,
-        format!("{}  e2e-operator\n", hex(operator.verifying_key().as_bytes())),
+        format!(
+            "{}  e2e-operator\n",
+            hex(operator.verifying_key().as_bytes())
+        ),
     )
     .unwrap();
     let allowlist = tmp.join("allowlist.toml");
@@ -145,7 +148,10 @@ async fn real_execd_runs_a_signed_read_only_bundle() {
     // Wait for the executor to bind its socket.
     let deadline = Instant::now() + Duration::from_secs(10);
     while !sock.exists() {
-        assert!(Instant::now() < deadline, "executor never created its socket");
+        assert!(
+            Instant::now() < deadline,
+            "executor never created its socket"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     // Small grace so the listener is actually accepting.

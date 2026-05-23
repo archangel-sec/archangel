@@ -138,7 +138,7 @@ mod tests {
         let s = SessionId::new();
         assert!(g.admit(s, 5, [1u8; 16]).is_ok());
         let _ = g.admit(s, 3, [2u8; 16]); // rejected
-        // seq state is still 5, so 6 must work and 5 must still fail.
+                                          // seq state is still 5, so 6 must work and 5 must still fail.
         assert!(g.admit(s, 6, [3u8; 16]).is_ok());
     }
 }

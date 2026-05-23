@@ -25,9 +25,7 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    error::ExecFormatError, hex, manifest::ExecManifest, trust::OperatorTrust,
-};
+use crate::{error::ExecFormatError, hex, manifest::ExecManifest, trust::OperatorTrust};
 
 /// A `.exec` bundle whose signature and payload hash have been verified.
 ///
@@ -112,9 +110,6 @@ fn verify_payload_hash(manifest: &ExecManifest) -> Result<(), ExecFormatError> {
     if actual == declared {
         Ok(())
     } else {
-        Err(ExecFormatError::PayloadHashMismatch {
-            declared,
-            actual,
-        })
+        Err(ExecFormatError::PayloadHashMismatch { declared, actual })
     }
 }

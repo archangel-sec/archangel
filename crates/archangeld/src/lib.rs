@@ -15,18 +15,18 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// The read-only orchestration pipeline.
+pub mod orchestrator;
 /// Prompt construction and prompt-injection defenses (#1–#4).
 pub mod prompt;
 /// Strict structured model-output parsing (#5).
 pub mod response;
-/// Per-session identity and `ExecRequest` signing (boundary B).
-pub mod session;
-/// The read-only orchestration pipeline.
-pub mod orchestrator;
-/// Production executor transport (boundary-B client over a Unix socket).
-pub mod transport;
 /// Control-plane socket server (boundary-A enforcement).
 pub mod server;
+/// Per-session identity and `ExecRequest` signing (boundary B).
+pub mod session;
+/// Production executor transport (boundary-B client over a Unix socket).
+pub mod transport;
 
 pub use archangel_config::{Config, ConfigError};
 pub use orchestrator::{ExecTransport, Orchestrator, OrchestratorError, TaskOutcome};

@@ -23,12 +23,12 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Policy subsystem error types.
-pub mod error;
-/// Immutable, compiled-in denylist (layer #8).
-pub mod denylist;
 /// Per-profile allowlist loader (layer #9, v0.1 subset).
 pub mod allowlist;
+/// Immutable, compiled-in denylist (layer #8).
+pub mod denylist;
+/// Policy subsystem error types.
+pub mod error;
 /// Lexical path normalization (denylist evasion resistance).
 pub mod pathnorm;
 
@@ -215,9 +215,7 @@ fn deny_from(m: &DenyMatch) -> PolicyDecision {
 mod tests {
     use archangel_core::{OperationMode, RiskLevel};
 
-    use super::{
-        Allowlist, PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest,
-    };
+    use super::{Allowlist, PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest};
 
     fn engine() -> PolicyEngine {
         let al = Allowlist::from_toml(
@@ -336,7 +334,10 @@ allowed_exec = ["rotate-logs", "wipe-disk"]
         let d = engine().evaluate(&r);
         assert!(matches!(
             d,
-            PolicyDecision::RequireApproval { two_person: false, .. }
+            PolicyDecision::RequireApproval {
+                two_person: false,
+                ..
+            }
         ));
         assert!(!d.is_allowed(), "approval-gated must never be is_allowed()");
         assert!(d.needs_approval());
@@ -354,7 +355,10 @@ allowed_exec = ["rotate-logs", "wipe-disk"]
         );
         assert!(matches!(
             engine().evaluate(&r),
-            PolicyDecision::RequireApproval { two_person: true, .. }
+            PolicyDecision::RequireApproval {
+                two_person: true,
+                ..
+            }
         ));
     }
 
@@ -385,7 +389,10 @@ allowed_exec = ["rotate-logs", "wipe-disk"]
         );
         assert!(matches!(
             engine().evaluate(&r),
-            PolicyDecision::RequireApproval { two_person: true, .. }
+            PolicyDecision::RequireApproval {
+                two_person: true,
+                ..
+            }
         ));
     }
 

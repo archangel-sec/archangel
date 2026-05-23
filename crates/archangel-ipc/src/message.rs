@@ -121,11 +121,7 @@ pub struct ExecResponse {
 impl ExecResponse {
     /// Build a rejection response.
     #[must_use]
-    pub fn rejected(
-        action_id: ActionId,
-        stage: RejectStage,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn rejected(action_id: ActionId, stage: RejectStage, reason: impl Into<String>) -> Self {
         Self {
             action_id,
             outcome: ExecOutcome::Rejected {

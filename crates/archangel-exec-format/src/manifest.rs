@@ -160,7 +160,6 @@ impl ExecManifest {
     pub(crate) fn parse(toml_bytes: &[u8]) -> Result<Self, crate::ExecFormatError> {
         let text = std::str::from_utf8(toml_bytes)
             .map_err(|e| crate::ExecFormatError::BadManifest(format!("not UTF-8: {e}")))?;
-        toml::from_str(text)
-            .map_err(|e| crate::ExecFormatError::BadManifest(e.to_string()))
+        toml::from_str(text).map_err(|e| crate::ExecFormatError::BadManifest(e.to_string()))
     }
 }

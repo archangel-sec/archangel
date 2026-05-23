@@ -17,11 +17,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::{
-    os::unix::fs::PermissionsExt as _,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{os::unix::fs::PermissionsExt as _, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Context as _};
 use clap::Parser;
@@ -34,9 +30,9 @@ use tracing::{error, info, warn};
 
 use archangel_config::Config;
 use archangel_exec_format::OperatorTrust;
+use archangel_execd::{BashRunner, ExecLimits, Executor};
 use archangel_ipc::{response_to_frame, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{Allowlist, PolicyEngine};
-use archangel_execd::{BashRunner, ExecLimits, Executor};
 
 /// Trust tier T2 executor: signed-request only, sandboxed.
 #[derive(Parser, Debug)]
@@ -120,8 +116,9 @@ fn read_key_file(path: &std::path::Path) -> anyhow::Result<VerifyingKey> {
 
 /// Resolve a setting: CLI override wins, else config, else a clear error.
 fn need<T>(cli: Option<T>, cfg: Option<T>, what: &str) -> anyhow::Result<T> {
-    cli.or(cfg)
-        .ok_or_else(|| anyhow!("missing required setting: {what} (set it in --config or pass the flag)"))
+    cli.or(cfg).ok_or_else(|| {
+        anyhow!("missing required setting: {what} (set it in --config or pass the flag)")
+    })
 }
 
 fn load_config(arg: Option<&PathBuf>) -> anyhow::Result<Option<Config>> {
@@ -132,7 +129,9 @@ fn load_config(arg: Option<&PathBuf>) -> anyhow::Result<Option<Config>> {
     }
     let default = std::path::Path::new("/etc/archangel/archangel.toml");
     if default.exists() {
-        Ok(Some(Config::load(default).context("loading default config")?))
+        Ok(Some(
+            Config::load(default).context("loading default config")?,
+        ))
     } else {
         Ok(None)
     }
@@ -250,8 +249,7 @@ async fn serve_loop(
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -324,9 +322,12 @@ async fn serve_one(
     executor: &mut Executor<BashRunner>,
 ) -> anyhow::Result<()> {
     let mut prefix = [0u8; 4];
-    stream.read_exact(&mut prefix).await.context("read length")?;
-    let len = SignedEnvelope::frame_len(prefix)
-        .map_err(|e| anyhow!("frame length rejected: {e}"))?;
+    stream
+        .read_exact(&mut prefix)
+        .await
+        .context("read length")?;
+    let len =
+        SignedEnvelope::frame_len(prefix).map_err(|e| anyhow!("frame length rejected: {e}"))?;
     let mut body = vec![0u8; len];
     stream.read_exact(&mut body).await.context("read body")?;
 

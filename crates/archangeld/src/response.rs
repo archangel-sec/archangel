@@ -105,8 +105,14 @@ fn strip_one_fence(s: &str) -> &str {
         return t;
     };
     // Drop the rest of the fence-open line (e.g. ```json).
-    let after_lang = rest.find('\n').map_or("", |i| rest.get(i + 1..).unwrap_or(""));
-    after_lang.trim().strip_suffix("```").unwrap_or(after_lang).trim()
+    let after_lang = rest
+        .find('\n')
+        .map_or("", |i| rest.get(i + 1..).unwrap_or(""));
+    after_lang
+        .trim()
+        .strip_suffix("```")
+        .unwrap_or(after_lang)
+        .trim()
 }
 
 #[derive(Deserialize)]
@@ -146,20 +152,20 @@ pub fn parse_model_response(
         ));
     }
     // `from_str` rejects trailing data, so this enforces exactly one object.
-    let parsed: RawAction = serde_json::from_str(json)
-        .map_err(|e| ResponseError::NotContractJson(e.to_string()))?;
+    let parsed: RawAction =
+        serde_json::from_str(json).map_err(|e| ResponseError::NotContractJson(e.to_string()))?;
 
     match parsed.action.as_str() {
         "ask" => {
-            let question = parsed.question.ok_or_else(|| {
-                ResponseError::BadShape("'ask' requires 'question'".to_owned())
-            })?;
+            let question = parsed
+                .question
+                .ok_or_else(|| ResponseError::BadShape("'ask' requires 'question'".to_owned()))?;
             Ok(ModelAction::Ask { question })
         }
         "refuse" => {
-            let reason = parsed.reason.ok_or_else(|| {
-                ResponseError::BadShape("'refuse' requires 'reason'".to_owned())
-            })?;
+            let reason = parsed
+                .reason
+                .ok_or_else(|| ResponseError::BadShape("'refuse' requires 'reason'".to_owned()))?;
             Ok(ModelAction::Refuse { reason })
         }
         tool => {
@@ -249,10 +255,7 @@ mod tests {
     fn prose_around_json_is_rejected() {
         let b = builder();
         assert!(matches!(
-            parse_model_response(
-                r#"Sure! Here you go: {"action":"refuse","reason":"x"}"#,
-                &b
-            ),
+            parse_model_response(r#"Sure! Here you go: {"action":"refuse","reason":"x"}"#, &b),
             Err(ResponseError::NotContractJson(_))
         ));
     }
@@ -273,10 +276,7 @@ mod tests {
     fn unknown_field_is_rejected() {
         let b = builder();
         assert!(matches!(
-            parse_model_response(
-                r#"{"action":"refuse","reason":"x","backdoor":true}"#,
-                &b
-            ),
+            parse_model_response(r#"{"action":"refuse","reason":"x","backdoor":true}"#, &b),
             Err(ResponseError::NotContractJson(_))
         ));
     }
@@ -285,10 +285,7 @@ mod tests {
     fn unsafe_tool_name_is_rejected() {
         let b = builder();
         assert!(matches!(
-            parse_model_response(
-                r#"{"action":"../../bin/sh","args":{},"reason":"x"}"#,
-                &b
-            ),
+            parse_model_response(r#"{"action":"../../bin/sh","args":{},"reason":"x"}"#, &b),
             Err(ResponseError::UnsafeExecName(_))
         ));
     }

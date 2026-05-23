@@ -21,11 +21,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// Argument schema validation (layer #7).
+pub mod args;
 /// `.exec` format error types.
 pub mod error;
 mod hex;
-/// Argument schema validation (layer #7).
-pub mod args;
 /// Typed manifest and parser.
 pub mod manifest;
 /// Operator trust set.
@@ -96,8 +96,7 @@ inline = "{}"
 
     fn trust_for(key: &SigningKey) -> OperatorTrust {
         let pub_hex = super::hex::encode(key.verifying_key().as_bytes());
-        OperatorTrust::from_str(&format!("{pub_hex}  operator-alice"))
-            .expect("trust parses")
+        OperatorTrust::from_str(&format!("{pub_hex}  operator-alice")).expect("trust parses")
     }
 
     fn sign(text: &str, key: &SigningKey) -> String {
@@ -122,8 +121,7 @@ inline = "{}"
         let sig = sign(&toml, &key);
         let mut tampered = toml;
         tampered.push(' '); // one extra byte → signature no longer covers it
-        let result =
-            VerifiedBundle::verify_bytes(tampered.as_bytes(), &sig, &trust_for(&key));
+        let result = VerifiedBundle::verify_bytes(tampered.as_bytes(), &sig, &trust_for(&key));
         assert!(matches!(result, Err(ExecFormatError::Untrusted)));
     }
 
@@ -176,8 +174,8 @@ inline = "{}"
         let key = signing_key();
         let toml = manifest_toml();
         let sig = sign(&toml, &key);
-        let bundle = VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key))
-            .expect("verify");
+        let bundle =
+            VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key)).expect("verify");
         let mut provided = BTreeMap::new();
         provided.insert("service".to_owned(), "nginx.service".to_owned());
         assert!(bundle.validate_args(&provided).is_ok());
@@ -188,8 +186,8 @@ inline = "{}"
         let key = signing_key();
         let toml = manifest_toml();
         let sig = sign(&toml, &key);
-        let bundle = VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key))
-            .expect("verify");
+        let bundle =
+            VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key)).expect("verify");
         let provided = BTreeMap::new();
         assert!(matches!(
             bundle.validate_args(&provided),
@@ -202,8 +200,8 @@ inline = "{}"
         let key = signing_key();
         let toml = manifest_toml();
         let sig = sign(&toml, &key);
-        let bundle = VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key))
-            .expect("verify");
+        let bundle =
+            VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key)).expect("verify");
         let mut provided = BTreeMap::new();
         provided.insert("service".to_owned(), "nginx.service".to_owned());
         provided.insert("extra_injected".to_owned(), "--privileged".to_owned());
@@ -218,15 +216,12 @@ inline = "{}"
         let key = signing_key();
         let toml = manifest_toml();
         let sig = sign(&toml, &key);
-        let bundle = VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key))
-            .expect("verify");
+        let bundle =
+            VerifiedBundle::verify_bytes(toml.as_bytes(), &sig, &trust_for(&key)).expect("verify");
         let mut provided = BTreeMap::new();
         // Starts like a valid service name but appends a command. The
         // schema regex is anchored, so this must be rejected.
-        provided.insert(
-            "service".to_owned(),
-            "nginx.service; rm -rf /".to_owned(),
-        );
+        provided.insert("service".to_owned(), "nginx.service; rm -rf /".to_owned());
         assert!(matches!(
             bundle.validate_args(&provided),
             Err(ExecFormatError::ArgRejected(_))
@@ -251,8 +246,7 @@ inline = "{}"
     fn malformed_signature_is_rejected() {
         let key = signing_key();
         let toml = manifest_toml();
-        let result =
-            VerifiedBundle::verify_bytes(toml.as_bytes(), "xyz", &trust_for(&key));
+        let result = VerifiedBundle::verify_bytes(toml.as_bytes(), "xyz", &trust_for(&key));
         assert!(matches!(result, Err(ExecFormatError::BadSignature(_))));
     }
 }

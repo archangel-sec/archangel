@@ -131,10 +131,7 @@ impl LlmBackend for AnthropicBackend {
         "anthropic"
     }
 
-    async fn complete(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let messages: Vec<WireMessage<'_>> = request
             .messages
             .iter()
@@ -162,8 +159,8 @@ impl LlmBackend for AnthropicBackend {
 
         let bytes = http::send_capped(http_req, self.max_response_bytes).await?;
 
-        let decoded: WireResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| LlmError::Decode(e.to_string()))?;
+        let decoded: WireResponse =
+            serde_json::from_slice(&bytes).map_err(|e| LlmError::Decode(e.to_string()))?;
 
         let text: String = decoded
             .content

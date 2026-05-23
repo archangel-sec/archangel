@@ -66,10 +66,7 @@ impl CtlClient {
     }
 
     /// Send one request and await the daemon's response.
-    pub async fn request(
-        &mut self,
-        request: CtlRequest,
-    ) -> Result<CtlResponse, CtlError> {
+    pub async fn request(&mut self, request: CtlRequest) -> Result<CtlResponse, CtlError> {
         let frame = self.next_frame(request)?;
         let mut stream = UnixStream::connect(&self.socket_path).await?;
         stream.write_all(&frame).await?;
@@ -117,13 +114,9 @@ mod tests {
     fn frame_round_trips_and_verifies_under_operator_key() {
         let mut c = client();
         let vk = SigningKey::from_bytes(&[5u8; 32]).verifying_key();
-        let frame = c
-            .next_frame(CtlRequest::Ping)
-            .expect("build frame");
-        let env = SignedCtlEnvelope::from_frame_body(
-            frame.get(4..).expect("body"),
-        )
-        .expect("decode envelope");
+        let frame = c.next_frame(CtlRequest::Ping).expect("build frame");
+        let env = SignedCtlEnvelope::from_frame_body(frame.get(4..).expect("body"))
+            .expect("decode envelope");
         let body = env.open(&vk).expect("verify under operator key");
         assert_eq!(body.seq, 1);
         assert_eq!(body.request, CtlRequest::Ping);
@@ -152,8 +145,7 @@ mod tests {
         let mut c = client();
         let attacker = SigningKey::from_bytes(&[6u8; 32]).verifying_key();
         let frame = c.next_frame(CtlRequest::Ping).expect("frame");
-        let env = SignedCtlEnvelope::from_frame_body(frame.get(4..).expect("b"))
-            .expect("decode");
+        let env = SignedCtlEnvelope::from_frame_body(frame.get(4..).expect("b")).expect("decode");
         assert!(env.open(&attacker).is_err());
     }
 
