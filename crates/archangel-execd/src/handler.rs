@@ -14,18 +14,24 @@
 //! 4. Sanitize `exec_name` (defense-in-depth path-traversal guard) and
 //!    resolve + verify the signed `.exec` bundle (`archangel-exec-format`).
 //! 5. Validate supplied arguments against the bundle schema (#7).
-//! 6. Enforce the v0.1 invariant: only `read_only = true` bundles run —
-//!    read from the *verified bundle*, never the daemon's claim.
+//! 6. Mutation gate: a `read_only = false` bundle (read from the *verified
+//!    bundle*, never the daemon's claim) runs only if the executor's own
+//!    config mode ceiling permits mutation — independent of the daemon's
+//!    untrusted `request.mode`.
 //! 7. Re-evaluate the immutable denylist + allowlist (#8/#9) over the
 //!    bundle's own payload and declared paths (defense in depth).
-//! 8. Only now, run the action in the minimal sandbox.
+//! 7.5 Snapshot gate (#16): a `mutates_persistent_state` bundle gets a
+//!    recovery point first, or is refused fail-closed.
+//! 7.6 Sandbox gate (#11): build + enforce the seccomp/cgroup sandbox, or
+//!    refuse fail-closed.
+//! 8. Run the action under the sandbox.
 //!
 //! Requests are processed **serially** in v0.1 — the executor is the sole
 //! mutation point; serializing bounds blast rate and simplifies reasoning.
 
 use std::{path::PathBuf, time::Duration};
 
-use archangel_core::ActionId;
+use archangel_core::{ActionId, OperationMode};
 use archangel_exec_format::{NetworkPolicy, OperatorTrust, VerifiedBundle};
 use archangel_ipc::{ExecOutcome, ExecRequest, ExecResponse, RejectStage, SignedEnvelope};
 use archangel_policy::{PathAccess, PathIntent, PolicyDecision, PolicyEngine, PolicyRequest};
@@ -77,6 +83,12 @@ pub struct Executor<R: ActionRunner> {
     /// Snapshot backend (#16). `None` ⇒ any `mutates_persistent_state`
     /// action is refused fail-closed (no recovery point ⇒ no mutation).
     snapshotter: Option<Box<dyn Snapshotter>>,
+    /// The executor's *own* mutation ceiling, taken from its config — never
+    /// from the daemon's (T3, untrusted) `request.mode`. A mutating bundle
+    /// runs only if this mode permits mutation; the default is the safest
+    /// (`ReadOnly`), so a compromised daemon cannot lift the read-only
+    /// switch by lying about the session mode.
+    mode_ceiling: OperationMode,
 }
 
 /// `exec_name` must be a single safe path component. Anything with a slash,
@@ -115,7 +127,19 @@ impl<R: ActionRunner> Executor<R> {
             replay: ReplayGuard::new(),
             runner,
             snapshotter,
+            // Fail-closed default: no mutation until the host config opts in.
+            mode_ceiling: OperationMode::ReadOnly,
         }
+    }
+
+    /// Set the executor's mutation ceiling from its own configuration.
+    ///
+    /// Called once at startup with `modes.default` from the executor's
+    /// config. This is the *independent* control that bounds mutation: a
+    /// mutating bundle runs only if this mode allows it, regardless of what
+    /// the (lower-trust) daemon claims the session mode is.
+    pub const fn set_mode_ceiling(&mut self, mode: OperationMode) {
+        self.mode_ceiling = mode;
     }
 
     /// Replace the trusted per-session verifying key.
@@ -144,7 +168,7 @@ impl<R: ActionRunner> Executor<R> {
         let action_id = request.action_id;
         self.anti_replay(&request)?;
         let bundle = self.resolve_bundle(&request)?;
-        Self::check_args_and_read_only(&request, &bundle)?;
+        self.check_args_and_mutation(&request, &bundle)?;
         self.policy_gate(&request, &bundle)?;
         // #16: no mutation without a recovery point (fail-closed).
         let snapshot_id = self.snapshot_gate(&request, &bundle)?;
@@ -308,9 +332,18 @@ impl<R: ActionRunner> Executor<R> {
         })
     }
 
-    /// Steps 5–6: arg schema, then the v0.1 read-only invariant (from the
-    /// verified bundle, not the daemon's claim).
-    fn check_args_and_read_only(request: &ExecRequest, bundle: &VerifiedBundle) -> Gate<()> {
+    /// Steps 5–6: arg schema, then the mutation gate. `read_only` is read
+    /// from the *verified bundle* (not the daemon's claim); a mutating
+    /// bundle is permitted only if the executor's own [`mode_ceiling`]
+    /// allows mutation. A mutating bundle that clears this gate still has to
+    /// pass the snapshot (#16) and sandbox (#11) gates below.
+    ///
+    /// [`mode_ceiling`]: Self::set_mode_ceiling
+    pub(crate) fn check_args_and_mutation(
+        &self,
+        request: &ExecRequest,
+        bundle: &VerifiedBundle,
+    ) -> Gate<()> {
         bundle.validate_args(&request.args).map_err(|e| {
             ExecResponse::rejected(
                 request.action_id,
@@ -318,13 +351,13 @@ impl<R: ActionRunner> Executor<R> {
                 format!("argument rejected: {e}"),
             )
         })?;
-        if bundle.manifest().meta.read_only {
+        if bundle.manifest().meta.read_only || self.mode_ceiling.allows_mutation() {
             Ok(())
         } else {
             Err(ExecResponse::rejected(
                 request.action_id,
                 RejectStage::NotReadOnly,
-                "this milestone executes read_only bundles only".to_owned(),
+                "executor is in read-only mode; refusing a mutating bundle".to_owned(),
             ))
         }
     }

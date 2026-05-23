@@ -138,7 +138,10 @@ pub struct ModesCfg {
 impl Default for ModesCfg {
     fn default() -> Self {
         Self {
-            default: OperationMode::Interactive,
+            // Fail-closed: an omitted `[modes]` section yields the *safest*
+            // posture (no mutation), never an implicitly mutating host. An
+            // operator opts into mutation explicitly.
+            default: OperationMode::ReadOnly,
             autonomous_allowed: false,
         }
     }
@@ -273,7 +276,8 @@ daemon_uid   = 1000
     #[test]
     fn minimal_valid_config_parses_with_defaults() {
         let c = Config::from_toml(MINIMAL).expect("valid");
-        assert_eq!(c.modes.default, OperationMode::Interactive);
+        // Fail-closed default: no `[modes]` section ⇒ read-only.
+        assert_eq!(c.modes.default, OperationMode::ReadOnly);
         assert!(!c.modes.autonomous_allowed);
         assert!(c.session.per_task_isolation);
         assert_eq!(c.sockets.operator_uid, 1000);

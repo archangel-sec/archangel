@@ -3,8 +3,9 @@
 //! The executor is the single point of system mutation and the first
 //! target of any external audit, so its logic lives here, unit-tested,
 //! behind a thin `main.rs` shell. It accepts only per-session-signed
-//! requests, re-verifies everything the daemon claims, and (in v0.1) runs
-//! only `read_only = true` bundles in a minimal sandbox.
+//! requests, re-verifies everything the daemon claims, and runs mutating
+//! bundles only when its own config mode permits — always under a snapshot
+//! (#16) and the seccomp/cgroup sandbox (#11).
 //!
 //! See [`handler`] for the security pipeline and its ordering rationale.
 
@@ -160,6 +161,25 @@ inline = "{payload}"
             "\n[meta]\nname = \"{name}\"\nversion = \"1.0.0\"\nrisk = \"high\"\n\
              read_only = false\nmutates_persistent_state = true\n\n[sandbox]\n\
              syscall_profile = \"x\"\nnetwork = \"none\"\n\
+             allowed_paths_rw = [\"/data/app\"]\ntimeout_seconds = 10\n\n\
+             [payload]\ntype = \"bash\"\nsha256 = \"{}\"\ninline = \"{payload}\"\n",
+            hex(&sha)
+        );
+        let sig = operator_key().sign(manifest.as_bytes()).to_bytes();
+        std::fs::write(dir.join(format!("{name}.exec")), &manifest).expect("exec");
+        std::fs::write(dir.join(format!("{name}.exec.sig")), hex(&sig)).expect("sig");
+    }
+
+    /// Like [`write_mutating_bundle`] but with a *runnable* sandbox profile
+    /// (`inspect`), so the action reaches execution once the snapshot gate
+    /// is satisfied (the other helper uses an unknown profile on purpose).
+    fn write_persistent_inspect_bundle(dir: &Path, name: &str) {
+        let payload = "echo mutate";
+        let sha: [u8; 32] = Sha256::digest(payload.as_bytes()).into();
+        let manifest = format!(
+            "\n[meta]\nname = \"{name}\"\nversion = \"1.0.0\"\nrisk = \"high\"\n\
+             read_only = false\nmutates_persistent_state = true\n\n[sandbox]\n\
+             syscall_profile = \"inspect\"\nnetwork = \"none\"\n\
              allowed_paths_rw = [\"/data/app\"]\ntimeout_seconds = 10\n\n\
              [payload]\ntype = \"bash\"\nsha256 = \"{}\"\ninline = \"{payload}\"\n",
             hex(&sha)
@@ -418,7 +438,9 @@ inline = "{payload}"
     }
 
     #[test]
-    fn non_read_only_bundle_is_refused_in_v01() {
+    fn mutating_bundle_is_refused_when_executor_is_read_only() {
+        // Default ceiling is read-only: a mutating bundle is refused here
+        // regardless of what the (untrusted) daemon claims the mode is.
         let dir = unique_dir();
         write_bundle(&dir, "mutator", false, "echo hi", SVC_SCHEMA);
         let mut ex = executor(dir.clone(), &["mutator"]);
@@ -430,6 +452,79 @@ inline = "{payload}"
                 ..
             }
         ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mutating_bundle_runs_when_executor_mode_allows_mutation() {
+        // Same mutating bundle, but the executor's own ceiling permits
+        // mutation ⇒ it passes the mutation gate, takes no snapshot (no
+        // persistent state), and runs under the sandbox.
+        let dir = unique_dir();
+        write_bundle(&dir, "svc-restart", false, "echo restart", SVC_SCHEMA);
+        let mut ex = executor(dir.clone(), &["svc-restart"]);
+        ex.set_mode_ceiling(OperationMode::Interactive);
+        let body = frame_body(
+            &request("svc-restart", 1, arg("service", "nginx")),
+            &session_key(),
+        );
+        assert!(
+            matches!(
+                ex.handle(&body).outcome,
+                ExecOutcome::Completed { exit_code: 0, .. }
+            ),
+            "a mutating bundle must run once the executor mode allows it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persistent_mutation_still_needs_a_snapshot_even_when_mode_allows() {
+        // Mutation enabled, but a `mutates_persistent_state` bundle with no
+        // snapshot backend is refused fail-closed (#16) — enabling mutation
+        // does not weaken the recovery-point invariant.
+        let dir = unique_dir();
+        write_persistent_inspect_bundle(&dir, "mut");
+        let mut ex = exec_with_snap(dir.clone(), None);
+        ex.set_mode_ceiling(OperationMode::Interactive);
+        let body = frame_body(&minimal_request("mut"), &session_key());
+        assert!(matches!(
+            ex.handle(&body).outcome,
+            ExecOutcome::Rejected {
+                stage: RejectStage::SnapshotUnavailable,
+                ..
+            }
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persistent_mutation_runs_with_snapshot_when_mode_allows() {
+        // The full enabled path: mutation allowed + a working snapshot
+        // backend ⇒ a recovery point is taken and the action runs, the
+        // response carrying the snapshot id.
+        let dir = unique_dir();
+        write_persistent_inspect_bundle(&dir, "mut");
+        let mut ex = exec_with_snap(
+            dir.clone(),
+            Some(Box::new(
+                archangel_snapshot::testutil::MockSnapshotter::working(),
+            )),
+        );
+        ex.set_mode_ceiling(OperationMode::Autonomous);
+        let body = frame_body(&minimal_request("mut"), &session_key());
+        let outcome = ex.handle(&body).outcome;
+        assert!(
+            matches!(
+                &outcome,
+                ExecOutcome::Completed {
+                    exit_code: 0,
+                    snapshot_id: Some(_),
+                    ..
+                }
+            ),
+            "expected a Completed with a snapshot id, got {outcome:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

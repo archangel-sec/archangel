@@ -29,6 +29,7 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use archangel_config::Config;
+use archangel_core::OperationMode;
 use archangel_exec_format::OperatorTrust;
 use archangel_execd::{BashRunner, ExecLimits, Executor};
 use archangel_ipc::{response_to_frame, ExecResponse, RejectStage, SignedEnvelope};
@@ -146,6 +147,9 @@ struct Settings {
     bundle_dir: PathBuf,
     session: SessionSource,
     timeout: Duration,
+    /// The executor's own mutation ceiling (`modes.default` from its config).
+    /// Defaults to the safest (`ReadOnly`) when no config is present.
+    mode_ceiling: OperationMode,
 }
 
 fn resolve(args: Args) -> anyhow::Result<Settings> {
@@ -184,6 +188,11 @@ fn resolve(args: Args) -> anyhow::Result<Settings> {
             "daemon.session_pub",
         )?)
     };
+    // Mutation ceiling from the executor's *own* config; absent config ⇒
+    // fail-closed read-only.
+    let mode_ceiling = cfg
+        .as_ref()
+        .map_or(OperationMode::ReadOnly, |c| c.modes.default);
     Ok(Settings {
         socket,
         peer_uid,
@@ -192,6 +201,7 @@ fn resolve(args: Args) -> anyhow::Result<Settings> {
         bundle_dir,
         session,
         timeout: Duration::from_secs(args.timeout_secs),
+        mode_ceiling,
     })
 }
 
@@ -289,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let executor = Executor::new(
+    let mut executor = Executor::new(
         initial_key,
         trust,
         policy,
@@ -301,6 +311,18 @@ async fn main() -> anyhow::Result<()> {
         BashRunner,
         snapshotter,
     );
+    // Independent mutation ceiling from the executor's own config (never the
+    // daemon's claim). Read-only ⇒ every mutating bundle is refused here.
+    executor.set_mode_ceiling(s.mode_ceiling);
+    if s.mode_ceiling.allows_mutation() {
+        warn!(
+            mode = ?s.mode_ceiling,
+            "executor mutation ENABLED: signed, denylisted, snapshotted, \
+             sandboxed mutating bundles will run"
+        );
+    } else {
+        info!(mode = ?s.mode_ceiling, "executor in read-only mode: mutating bundles refused");
+    }
 
     if s.socket.exists() {
         std::fs::remove_file(&s.socket).context("removing stale socket")?;

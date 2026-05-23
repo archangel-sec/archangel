@@ -113,15 +113,32 @@ and interface enumeration (`__check_pf`) keep working; network egress stays
 structurally impossible at the syscall layer (and #17 adds the kernel egress
 filter on top).
 
-## 5. What is deferred (next unit)
+## 5. Mutation enablement
 
-- Enabling mutation: the executor's read-only invariant is only relaxed once
-  **both** #11 (this) and #16 (snapshots, done) are enforced on the path.
+Mutation is now **enabled**, gated by the executor's own mode ceiling — not
+by the daemon's (T3, untrusted) `request.mode`. The executor reads
+`modes.default` from its *own* config into a mutation ceiling (default, and
+fail-closed, `read_only`). A `read_only = false` bundle runs only if that
+ceiling permits mutation, **and** it still passes every other gate:
+
+1. mutation gate (this ceiling),
+2. denylist + allowlist (#8/#9),
+3. snapshot (#16) — a `mutates_persistent_state` bundle gets a recovery point
+   or is refused fail-closed,
+4. sandbox (#11) — seccomp + cgroup limits, or refused.
+
+So even a fully compromised daemon can, at most, run an operator-signed,
+denylisted-checked, snapshotted, sandboxed bundle, and only when the host's
+own config opted into mutation. Setting `modes.default = "read_only"` (the
+shipped default) keeps the host strictly read-only regardless of any daemon
+claim.
+
+## 6. What is deferred (next unit)
+
 - Mount-namespace path binding (`allowed_paths_ro` / `allowed_paths_rw`), the
-  namespace `unshare` set, the user-namespace uid/gid map, and parent-side
-  cgroup attach (`cpu.max` / `memory.max` are already parsed and validated by
-  `plan`, just not yet written). The enforced syscall surface already denies
-  the escape vectors these would also block.
+  namespace `unshare` set, and the user-namespace uid/gid map. The enforced
+  syscall surface (seccomp) already denies the escape vectors these would also
+  block, and cgroup limits already bound resources.
 
 Non-Linux targets compile `archangel-sandbox` as an explicit no-op stub so the
 workspace still checks on a developer laptop; the stub can never be used to
