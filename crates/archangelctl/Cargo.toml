@@ -42,6 +42,7 @@ archangel-core = { workspace = true }
 archangel-audit = { workspace = true }
 archangel-ctl = { workspace = true }
 archangel-config = { workspace = true }
+archangel-egress = { workspace = true }
 archangel-exec-format = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

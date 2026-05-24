@@ -232,6 +232,7 @@ dependencies = [
  "archangel-config",
  "archangel-core",
  "archangel-ctl",
+ "archangel-egress",
  "archangel-exec-format",
  "clap",
  "ed25519-dalek",

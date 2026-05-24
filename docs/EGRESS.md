@@ -1,10 +1,10 @@
 # Archangel — Egress filtering (threat-model layer #17)
 
-> Status: **v0.3, policy core.** The fail-closed egress *decision* —
-> `archangel-egress` + the `[egress]` config — is implemented and tested.
-> The *structural enforcement* that makes a denied connection impossible
-> (not merely "decided against") is the next unit; this document is its
-> contract.
+> Status: **v0.3.** The fail-closed egress *decision* (`archangel-egress` +
+> `[egress]` config) and the *systemd structural enforcer*
+> (`archangelctl egress-sync`, kernel-level `IPAddressAllow=` from the
+> resolved allowlist) are implemented and tested. A hostname-native egress
+> proxy and per-action egress remain future work (§3).
 
 ## 1. What #17 is for
 
@@ -43,35 +43,46 @@ Two egress surfaces:
 `Config::validate` compiles the `[egress]` allowlist, so a bad entry refuses
 daemon startup rather than silently widening egress.
 
-## 3. The enforcement (next unit)
+## 3. Enforcement
 
-The policy decides; enforcement must make "deny" *unbypassable*. Planned, in
-order of strength:
+The policy decides; enforcement makes "deny" *unbypassable*. In order of
+strength:
 
-1. **Daemon network confinement (structural).** Restrict the `archangeld`
-   process so the kernel only lets it reach allowlisted endpoints:
-   - *systemd `IPAddressAllow=`* generated from the allowlist resolved to IPs
-     at setup time. Kernel-enforced (eBPF/cgroup), unbypassable by the
-     process — but IP-based, so CDN-fronted APIs (rotating IPs) need
-     periodic regeneration. This is why `IPAddressAllow=` cannot take a
-     hostname directly.
-   - *Egress proxy + network namespace* — the daemon has no direct route; all
-     traffic goes through a small-TCB proxy that allowlists by hostname/SNI.
-     Strongest and hostname-native, but a larger subsystem.
-2. **App-level connector guard (defense in depth).** The LLM client checks
-   every destination against `EgressPolicy` before connecting and refuses a
-   non-allowlisted host. This catches a *steered* (not yet RCE'd) daemon and
-   documents intent, but a raw-syscall RCE bypasses it — hence it complements,
-   never replaces, the structural layer.
-3. **Action egress.** For bundles that opt into `network = "egress"`, the
-   sandbox applies the same `EgressPolicy` to the action's network namespace.
+1. **Daemon network confinement via systemd — implemented.**
+   `archangelctl egress-sync` compiles the `[egress]` allowlist into a
+   systemd drop-in for `archangeld`: it resolves each allowlisted host to its
+   current IPs and emits `IPAddressDeny=any` + `IPAddressAllow=localhost <ips>`.
+   That filter is **kernel-enforced** (eBPF/cgroup) and unbypassable by the
+   process — even a fully compromised daemon cannot send a packet to a
+   non-allowlisted address.
 
-## 4. Honest scope
+   ```sh
+   archangelctl egress-sync                 # print the drop-in (dry run)
+   sudo archangelctl egress-sync --write    # install it
+   sudo systemctl daemon-reload && sudo systemctl restart archangeld
+   ```
 
-Implemented now: the fail-closed decision (`archangel-egress`) and its
-config, validated at startup. **Not yet enforced on the wire** — a denied
-destination is currently only "would be denied," not "cannot be reached."
-Until the structural layer lands, the daemon's egress is bounded the way the
-operator set it up (e.g. the `IPAddressDeny=any` + `IPAddressAllow=` in the
-systemd unit, edited by hand). Do not rely on #17 as a containment guarantee
-before the enforcement unit ships.
+   Two honest limits: it is **IP-granular** (ports are dropped — `IPAddressAllow`
+   has no port concept), and **IP-pinned** — a CDN-fronted API (rotating IPs)
+   needs `egress-sync` re-run when its addresses change (a timer is reasonable).
+   `localhost` is always allowed so a loopback model endpoint and the
+   `systemd-resolved` stub keep working.
+
+2. **Egress proxy + network namespace — future.** The hostname-native,
+   rotation-proof alternative: the daemon has no direct route and all traffic
+   goes through a small-TCB proxy that allowlists by hostname/SNI. Strongest,
+   but a larger subsystem; deferred.
+3. **Action egress — future.** For bundles that opt into `network = "egress"`,
+   the sandbox will apply the same `EgressPolicy` to the action's network
+   namespace. Until then, the default/`inspect` seccomp profile already makes
+   action `socket(AF_INET)` fatal, so non-network actions cannot egress at all.
+
+## 4. Scope today
+
+Implemented: the fail-closed decision (`archangel-egress`), its config
+(validated at startup), and the systemd structural enforcer (`egress-sync`).
+The enforcer is **opt-in** (the operator runs it) so it never silently breaks
+a working daemon; once applied, it is a real kernel-level containment of the
+daemon's egress. The proxy (hostname-native) and per-action egress remain
+future work — until the proxy lands, treat the IP-pinned drop-in as "precise
+but needs re-sync on rotation," not "set and forget."

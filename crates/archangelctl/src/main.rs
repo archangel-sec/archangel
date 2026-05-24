@@ -122,6 +122,25 @@ enum Command {
         #[arg(long, default_value = "/run/archangel/ctl.sock")]
         socket: PathBuf,
     },
+    /// Compile the `[egress]` allowlist (#17) into a kernel-enforced systemd
+    /// drop-in: resolve each allowlisted host to its current IPs and emit
+    /// `IPAddressDeny=any` + `IPAddressAllow=`. Prints to stdout by default;
+    /// `--write` installs it for `archangeld`. Re-run when a host's IPs
+    /// rotate (CDN/DNS).
+    EgressSync {
+        /// Main configuration file (source of the `[egress]` allowlist).
+        #[arg(long, default_value = "/etc/archangel/archangel.toml")]
+        config: PathBuf,
+        /// Install the drop-in instead of just printing it.
+        #[arg(long)]
+        write: bool,
+        /// Drop-in path installed with `--write`.
+        #[arg(
+            long,
+            default_value = "/etc/systemd/system/archangeld.service.d/egress.conf"
+        )]
+        dropin: PathBuf,
+    },
 }
 
 fn make_client(secret: &Path, socket: PathBuf) -> Result<CtlClient, ExitCode> {
@@ -456,5 +475,95 @@ async fn main() -> ExitCode {
             Ok(c) => one_shot(c, CtlRequest::ReloadPolicy, palette).await,
             Err(code) => code,
         },
+        Command::EgressSync {
+            config,
+            write,
+            dropin,
+        } => do_egress_sync(&config, write, &dropin),
     }
+}
+
+/// Compile `[egress]` into a systemd egress drop-in (#17 structural layer).
+/// Resolves each allowlisted host to its current IPs; prints the drop-in, or
+/// installs it with `--write`.
+fn do_egress_sync(config: &Path, write: bool, dropin: &Path) -> ExitCode {
+    use std::net::ToSocketAddrs as _;
+
+    let cfg = match archangel_config::Config::load(config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cannot load {}: {e}", config.display());
+            return ExitCode::from(1);
+        }
+    };
+    let policy = match cfg.egress.to_policy() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("invalid [egress] config: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if policy.is_allow_all() {
+        eprintln!(
+            "[egress].default_policy = \"allow\" permits ALL egress — refusing to \
+             generate an allowlist drop-in. Set default_policy = \"deny\" and list hosts."
+        );
+        return ExitCode::from(1);
+    }
+
+    let mut ips: Vec<std::net::IpAddr> = Vec::new();
+    let mut failed = false;
+    for host in policy.hosts() {
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            ips.push(ip); // literal IP — no resolution needed
+            continue;
+        }
+        match (host.as_str(), 0u16).to_socket_addrs() {
+            Ok(addrs) => {
+                let mut any = false;
+                for a in addrs {
+                    ips.push(a.ip());
+                    any = true;
+                }
+                if !any {
+                    eprintln!("warning: {host} resolved to no addresses");
+                    failed = true;
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: cannot resolve {host}: {e}");
+                failed = true;
+            }
+        }
+    }
+    ips.sort_unstable();
+    ips.dedup();
+
+    let content = archangel_egress::render_systemd_dropin(&ips);
+
+    if !write {
+        print!("{content}");
+        if failed {
+            eprintln!("note: some hosts did not resolve; the drop-in above omits them");
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(parent) = dropin.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("cannot create {}: {e}", parent.display());
+            return ExitCode::from(1);
+        }
+    }
+    if let Err(e) = std::fs::write(dropin, &content) {
+        eprintln!("cannot write {}: {e}", dropin.display());
+        return ExitCode::from(1);
+    }
+    println!("wrote {}", dropin.display());
+    println!("apply with: sudo systemctl daemon-reload && sudo systemctl restart archangeld");
+    if failed {
+        eprintln!("warning: some hosts did not resolve and are NOT in the drop-in");
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
 }
