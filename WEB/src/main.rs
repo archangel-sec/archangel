@@ -31,9 +31,19 @@ async fn main() {
         .nest_service("/dist", ServeDir::new("dist"));
 
     let addr = std::env::var("ARCHANGEL_WEB_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
-    let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("archangel-web: cannot bind {addr}: {e}");
+            eprintln!("Pick a free port, e.g.:  ARCHANGEL_WEB_ADDR=127.0.0.1:8090 cargo run");
+            std::process::exit(1);
+        }
+    };
     tracing::info!("archangel-web listening on http://{addr}");
-    axum::serve(listener, app).await.expect("serve");
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("archangel-web: server error: {e}");
+        std::process::exit(1);
+    }
 }
 
 /// Render a page body inside the shared shell and full HTML document.
