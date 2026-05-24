@@ -69,11 +69,11 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "archangel"
-version = "0.0.0"
+version = "0.4.0"
 
 [[package]]
 name = "archangel-audit"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "ed25519-dalek",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-config"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "archangel-egress",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-core"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "rand 0.8.6",
  "serde",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-ctl"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "ciborium",
@@ -122,14 +122,14 @@ dependencies = [
 
 [[package]]
 name = "archangel-egress"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "archangel-exec-format"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "ed25519-dalek",
@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-execd"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "archangel-config",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-ipc"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "ciborium",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-llm"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "async-trait",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-policy"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "globset",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-sandbox"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "archangel-core",
  "caps",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "archangel-snapshot"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "thiserror 1.0.69",
  "tracing",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "archangelctl"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "archangel-audit",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "archangeld"
-version = "0.0.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "archangel-audit",

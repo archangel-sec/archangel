@@ -44,14 +44,14 @@ done
 ```
 
 Install all together so the dependency order resolves automatically:
-`sudo apt install ./target/debian/archangel*_0.0.0-1_amd64.deb`. The
+`sudo apt install ./target/debian/archangel*_0.4.0-1_amd64.deb`. The
 `archangeld` package's postinst creates the users/dirs; the `archangel`
 meta-package pulls everything.
 
 ## Three-step install
 
 ```sh
-sudo apt install ./target/debian/archangel*_0.0.0-1_amd64.deb
+sudo apt install ./target/debian/archangel*_0.4.0-1_amd64.deb
 sudo archangel setup --backend ollama        # or: --backend anthropic
 sudo systemctl enable --now archangel-execd archangeld
 ```

@@ -19,7 +19,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.4.0"
 edition = "2021"
 # MSRV policy: stable - 2 releases. Bump deliberately, in its own commit,
 # with a CHANGELOG entry. If distro packaging on RHEL-family or Debian stable
@@ -35,18 +35,18 @@ categories = ["command-line-utilities", "os::linux-apis"]
 
 [workspace.dependencies]
 # Local crates
-archangel-core = { path = "crates/archangel-core", version = "0.0.0" }
-archangel-config = { path = "crates/archangel-config", version = "0.0.0" }
-archangel-ipc = { path = "crates/archangel-ipc", version = "0.0.0" }
-archangel-ctl = { path = "crates/archangel-ctl", version = "0.0.0" }
-archangel-policy = { path = "crates/archangel-policy", version = "0.0.0" }
-archangel-audit = { path = "crates/archangel-audit", version = "0.0.0" }
-archangel-llm = { path = "crates/archangel-llm", version = "0.0.0" }
-archangel-sandbox = { path = "crates/archangel-sandbox", version = "0.0.0" }
-archangel-exec-format = { path = "crates/archangel-exec-format", version = "0.0.0" }
-archangel-snapshot = { path = "crates/archangel-snapshot", version = "0.0.0" }
-archangel-egress = { path = "crates/archangel-egress", version = "0.0.0" }
-archangel-execd = { path = "crates/archangel-execd", version = "0.0.0" }
+archangel-core = { path = "crates/archangel-core", version = "0.4.0" }
+archangel-config = { path = "crates/archangel-config", version = "0.4.0" }
+archangel-ipc = { path = "crates/archangel-ipc", version = "0.4.0" }
+archangel-ctl = { path = "crates/archangel-ctl", version = "0.4.0" }
+archangel-policy = { path = "crates/archangel-policy", version = "0.4.0" }
+archangel-audit = { path = "crates/archangel-audit", version = "0.4.0" }
+archangel-llm = { path = "crates/archangel-llm", version = "0.4.0" }
+archangel-sandbox = { path = "crates/archangel-sandbox", version = "0.4.0" }
+archangel-exec-format = { path = "crates/archangel-exec-format", version = "0.4.0" }
+archangel-snapshot = { path = "crates/archangel-snapshot", version = "0.4.0" }
+archangel-egress = { path = "crates/archangel-egress", version = "0.4.0" }
+archangel-execd = { path = "crates/archangel-execd", version = "0.4.0" }
 
 # Async runtime
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "signal", "sync", "time"] }

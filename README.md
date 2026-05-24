@@ -6,11 +6,11 @@ Archangel is a Rust daemon that lets an LLM observe, propose, and (under strict 
 
 ---
 
-## ⚠️ Status: pre-alpha, do not run in production
+## ⚠️ Status: v0.4.0, pre-alpha — do not run in production
 
-This repository is the **founding skeleton** of archangel. No release exists yet. The architecture, threat model, and security posture are defined in detail under [`docs/`](docs/); the implementation is not.
+The full **read-only → interactive → autonomous** spine is implemented and tested end-to-end (validated on a real host): all threat-model defense layers (#1–#18) have working, fail-closed implementations, with ~300 tests and a CI red-team corpus. The architecture and threat model under [`docs/`](docs/) are now backed by code.
 
-If you are evaluating this for adoption: come back when there is a tagged release **and** at least one independent security audit. Until then, please read, review, and break things — but do not deploy.
+That is **not** the same as production-ready. Per [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md), the v1.0 bar — an **external security audit**, a public red-team campaign, a stable-release track record, and an unaffiliated production deployment — is unmet by design. If you are evaluating this for adoption: use it in a lab you can rebuild, ideally in `read_only`/`interactive` mode, and come back for production when those gates are met. Until then, please read, review, and break things — but do not deploy.
 
 ---
 
@@ -64,24 +64,22 @@ The seventeen layers that compose this posture are listed in the [threat model](
 
 ---
 
-## Quickstart (when there is one)
+## Quickstart (build from source)
 
-There isn't one yet. When v0.1 is tagged, this section will document:
+No distro packages yet — build the DEBs from source (`cargo install cargo-deb` first). See [`packaging/README.md`](packaging/README.md) for RPM and details.
 
 ```bash
-# Fedora / RHEL family
-sudo dnf install archangel
+cargo build --release
+for p in archangeld archangel-execd archangelctl archangel; do cargo deb --no-build -p "$p"; done
+sudo dpkg -i ./target/debian/archangel*_0.4.0-1_amd64.deb
 
-# Debian / Ubuntu family
-sudo apt install archangel
-
-# After install:
-sudo archangelctl init               # generates operator keys, sets up /etc/archangel/
-sudo systemctl enable --now archangeld archangel-execd
-archangelctl session start --mode read-only --profile default
+# Three-step setup:
+sudo archangel setup --backend ollama        # or: --backend anthropic
+sudo systemctl enable --now archangel-execd archangeld
+archangelctl session --secret /etc/archangel/trust/operator.key
 ```
 
-For now, see [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) (forthcoming) for the intended operator workflow.
+`archangel setup` is idempotent and fail-closed (creates the operator key, trust, a read-only allowlist, and a schema-validated config; never overwrites an existing one). Start in `read_only`; opt into mutation/monitoring deliberately. See [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md) before going beyond a lab.
 
 ---
 
@@ -89,19 +87,25 @@ For now, see [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) (forthcoming) fo
 
 ```
 crates/
-  archangeld/             # the daemon (talks to LLM, never mutates)
+  archangeld/             # the daemon (talks to LLM, monitors logs, never mutates)
   archangel-execd/        # the executor (only thing that mutates)
-  archangelctl/           # operator CLI
+  archangelctl/           # operator CLI (setup, bundle-sign, egress-sync, session)
+  archangel/              # meta-package + `archangel` launcher
   archangel-core/         # shared types
-  archangel-policy/       # immutable denylist + WASM policy engine
+  archangel-config/       # shared fail-closed config schema
+  archangel-policy/       # immutable compiled denylist + allowlist
   archangel-audit/        # hash-chained signed log
-  archangel-llm/          # backend adapters
-  archangel-sandbox/      # seccomp / namespaces / cgroups
+  archangel-llm/          # backend adapters (Anthropic, Ollama)
+  archangel-ipc/          # boundary-B signed protocol
+  archangel-ctl/          # boundary-A signed control protocol
+  archangel-sandbox/      # seccomp + capabilities + cgroups (the sole audited unsafe)
+  archangel-snapshot/     # recovery points before mutation
+  archangel-egress/       # egress allowlist (#17)
   archangel-exec-format/  # .exec bundle parser + verifier
-docs/                     # threat model, architecture, formats, ops guides
-packaging/                # DEB, RPM, /etc/archangel/ examples
+docs/                     # threat model, architecture, sandbox/egress, readiness
+packaging/                # DEB, RPM, /etc/archangel/ examples, maintainer scripts
 systemd/                  # hardened unit files
-tests/                    # integration + red-team prompt-injection corpus
+crates/archangeld/tests/  # integration + red-team prompt-injection corpus (#18)
 ```
 
 ---
