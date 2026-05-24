@@ -35,14 +35,24 @@ adduser_idempotent archangel-exec  archangel-exec
 usermod -aG archangel-audit archangel      >/dev/null 2>&1 || true
 usermod -aG archangel-audit archangel-exec >/dev/null 2>&1 || true
 
+# The executor (T2) must READ the shared config tree (config, trust store,
+# allowlist, signed bundles) which is group-owned by `archangel`. Add it to
+# that group; it gains read only (the operator private key stays 0600, so
+# group membership never exposes it).
+usermod -aG archangel archangel-exec >/dev/null 2>&1 || true
+
 # Runtime / state / log directories with least-privilege ownership.
 install -d -m 0750 -o archangel      -g archangel       /var/lib/archangel
 install -d -m 0750 -o archangel-exec -g archangel-exec  /var/lib/archangel-exec
 install -d -m 2750 -o archangel      -g archangel-audit /var/log/archangel
-install -d -m 0750 -o root           -g archangel       /etc/archangel
-install -d -m 0750 -o root           -g archangel       /etc/archangel/trust
-install -d -m 0750 -o root           -g archangel       /etc/archangel/policies
-install -d -m 0750 -o root           -g archangel       /etc/archangel/exec
+# setgid (2750) so files created here later by `archangel setup` (run under
+# sudo, i.e. as root) inherit group `archangel` rather than root — otherwise
+# the daemons, which read this tree via the `archangel` group, get EPERM. The
+# operator private key is still written 0600, so the group cannot read it.
+install -d -m 2750 -o root           -g archangel       /etc/archangel
+install -d -m 2750 -o root           -g archangel       /etc/archangel/trust
+install -d -m 2750 -o root           -g archangel       /etc/archangel/policies
+install -d -m 2750 -o root           -g archangel       /etc/archangel/exec
 
 # Shared runtime dir (sockets + published session key). tmpfiles.d
 # recreates it on every boot; create it now too so a post-install run
