@@ -350,7 +350,13 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(parent).ok();
     }
     let listener = UnixListener::bind(&s.socket).context("bind exec socket")?;
-    std::fs::set_permissions(&s.socket, std::fs::Permissions::from_mode(0o600))
+    // 0660, not 0600: the daemon (a different user) must be able to connect.
+    // The real authentication is the SO_PEERCRED uid check (only the daemon
+    // uid is accepted) plus the per-session Ed25519 signature on every
+    // request — the file mode is only a coarse first filter. The socket sits
+    // in /run/archangel (mode 2770, group archangel-audit, both daemons
+    // members), so 0660 lets exactly those two service users reach it.
+    std::fs::set_permissions(&s.socket, std::fs::Permissions::from_mode(0o660))
         .context("chmod exec socket")?;
     info!(socket = %s.socket.display(), peer_uid = s.peer_uid, "executor listening");
 
