@@ -56,6 +56,13 @@ tarpaulin-report.html
 /fuzz/corpus/
 /fuzz/artifacts/
 
+# Standalone sub-projects (excluded from the workspace): build artifacts only;
+# their source + lockfiles ARE committed.
+/WEB/target/
+/book/target/
+# Generated guide (produced by `cargo run` in book/; regenerate, don't commit drafts).
+*.docx
+
 # Misc
 *.log
 *.tmp

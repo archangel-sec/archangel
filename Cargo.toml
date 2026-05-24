@@ -1,5 +1,13 @@
 [workspace]
 resolver = "2"
+# WEB/ (the marketing/docs site) and book/ (the .docx generator) are
+# deliberately NOT members: they carry frontend/tooling dependencies that
+# must never enter the security TCB's audit surface. They are standalone
+# Cargo projects with their own lockfiles.
+exclude = [
+    "WEB",
+    "book",
+]
 members = [
     "crates/archangel-core",
     "crates/archangel-config",
