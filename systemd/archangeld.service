@@ -13,7 +13,11 @@ AssertPathExists=/sys/fs/cgroup/cgroup.controllers
 AssertPathIsDirectory=/etc/archangel
 
 [Service]
-Type=notify
+# `exec`, not `notify`: the binary does not implement the sd_notify readiness
+# protocol, so `notify` would leave systemd waiting for a READY=1 that never
+# comes (start "times out" and the unit restart-loops despite working). With
+# `exec`, the unit is active once the binary has successfully exec'd.
+Type=exec
 # The LLM token is never in the config file. `archangelctl setup` writes
 # it (0600) to llm.env; the leading `-` makes it optional (absent for the
 # offline Ollama backend, which needs no token).
@@ -22,7 +26,8 @@ ExecStart=/usr/bin/archangeld --config /etc/archangel/archangel.toml
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=10s
-WatchdogSec=30s
+# No WatchdogSec: it requires periodic sd_notify(WATCHDOG=1) pings the binary
+# does not send yet (re-add when sd_notify support lands).
 
 # --- Identity ---------------------------------------------------------------
 User=archangel
