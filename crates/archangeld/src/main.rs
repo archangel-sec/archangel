@@ -19,7 +19,8 @@ use std::{
     io::Write as _,
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Context as _};
@@ -28,6 +29,7 @@ use clap::Parser;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::UnixListener,
+    sync::Mutex,
 };
 use tracing::{error, info, warn};
 
@@ -41,9 +43,16 @@ use archangel_llm::{
 };
 use archangel_policy::{Allowlist, PolicyEngine};
 use archangeld::{
-    prompt::ToolSpec, server::handle_ctl_frame, server::CtlReplayGuard, Config, Orchestrator,
-    Session, SocketExecTransport,
+    autoloop::AUTONOMOUS_TASK, monitor::Pattern, prompt::ToolSpec, server::handle_ctl_frame,
+    server::CtlReplayGuard, Config, MonitorDriver, MonitorLimits, Orchestrator, Session,
+    SocketExecTransport, TaskOutcome,
 };
+
+/// The fully-monomorphized orchestrator this binary runs.
+type Orch = Orchestrator<AnyBackend, SocketExecTransport, std::fs::File>;
+/// Shared so the operator control loop and the autonomous monitor loop drive
+/// the *same* session (one published session key, one serialized executor).
+type SharedOrch = Arc<Mutex<Orch>>;
 
 #[derive(Parser, Debug)]
 #[command(name = "archangeld", version, about = "Archangel daemon (T3)")]
@@ -343,8 +352,120 @@ async fn main() -> anyhow::Result<()> {
         "control plane listening"
     );
 
+    // Share one orchestrator (and thus one session key) between the operator
+    // control loop and the optional autonomous monitor loop.
+    let orchestrator: SharedOrch = Arc::new(Mutex::new(orchestrator));
+
+    // #monitor: spawn the autonomous loop only if the operator opted in.
+    spawn_monitor_if_enabled(&cfg, &orchestrator)?;
+
     serve_ctl_loop(listener, operator_uid, operator_pub, orchestrator).await;
     Ok(())
+}
+
+/// Start the autonomous monitor loop iff `monitor.enabled`. Off by default
+/// (fail-closed); a trigger pattern that does not compile refuses startup.
+fn spawn_monitor_if_enabled(cfg: &Config, orchestrator: &SharedOrch) -> anyhow::Result<()> {
+    if !cfg.monitor.enabled {
+        info!("autonomous log monitor disabled (monitor.enabled = false)");
+        return Ok(());
+    }
+    let driver = build_monitor_driver(cfg).context("building log monitor")?;
+    let interval = Duration::from_secs(cfg.monitor.poll_interval_secs.max(1));
+    warn!(
+        mode = ?cfg.modes.default,
+        poll_secs = cfg.monitor.poll_interval_secs,
+        sources = cfg.monitor.sources.len(),
+        "autonomous log monitor ENABLED: matched events will be assessed by \
+         the model and any resulting action runs through the full gate stack \
+         (signed, denylisted, snapshotted, sandboxed, rate-limited)"
+    );
+    tokio::spawn(run_monitor_loop(driver, Arc::clone(orchestrator), interval));
+    Ok(())
+}
+
+/// Map the validated `[monitor]` config into a [`MonitorDriver`]. Fail-closed:
+/// a pattern that does not compile is a startup error.
+fn build_monitor_driver(cfg: &Config) -> anyhow::Result<MonitorDriver> {
+    let patterns: Vec<Pattern> = cfg
+        .monitor
+        .patterns
+        .iter()
+        .map(|p| Pattern {
+            label: p.label.clone(),
+            regex: p.regex.clone(),
+        })
+        .collect();
+    let limits = MonitorLimits {
+        max_line_bytes: cfg.monitor.max_line_bytes,
+        max_lines_per_poll: cfg.monitor.max_lines_per_poll,
+    };
+    MonitorDriver::new(
+        cfg.monitor.sources.clone(),
+        limits,
+        &patterns,
+        Duration::from_secs(cfg.monitor.cooldown_secs),
+    )
+    .map_err(|e| anyhow!("monitor patterns rejected: {e}"))
+}
+
+/// The autonomous loop: every tick, hand each actionable alert to the shared
+/// orchestrator's fully-gated `run_task`. The hostile log line travels only
+/// as spotlighted untrusted context; the fixed [`AUTONOMOUS_TASK`] is the
+/// operator instruction. Never returns.
+async fn run_monitor_loop(mut driver: MonitorDriver, orchestrator: SharedOrch, interval: Duration) {
+    let mut ticker = tokio::time::interval(interval);
+    loop {
+        ticker.tick().await;
+        for alert in driver.poll_actionable(Instant::now()) {
+            let labels = alert.matched.join(",");
+            // Hold the lock for the whole assessment so autonomous and
+            // operator actions never interleave (the executor is serial).
+            let outcome = {
+                let mut orch = orchestrator.lock().await;
+                orch.run_task(AUTONOMOUS_TASK, &[("log-line", alert.event.line.as_str())])
+                    .await
+            };
+            match outcome {
+                Ok(TaskOutcome::Executed {
+                    exec, exit_code, ..
+                }) => info!(
+                    triggers = %labels,
+                    exec = %exec,
+                    exit_code,
+                    "autonomous action executed"
+                ),
+                Ok(TaskOutcome::ApprovalRequired {
+                    exec, approval_id, ..
+                }) => info!(
+                    triggers = %labels,
+                    exec = %exec,
+                    approval_id = %approval_id,
+                    "autonomous proposal awaiting operator approval"
+                ),
+                Ok(TaskOutcome::Refused { reason }) => info!(
+                    triggers = %labels,
+                    reason = %reason,
+                    "model declined to act on event"
+                ),
+                Ok(TaskOutcome::Denied { stage, reason }) => warn!(
+                    triggers = %labels,
+                    stage = %stage,
+                    reason = %reason,
+                    "autonomous proposal denied by a gate"
+                ),
+                Ok(TaskOutcome::Asked { .. }) => warn!(
+                    triggers = %labels,
+                    "model asked a question in autonomous mode; ignored (no operator in loop)"
+                ),
+                Ok(TaskOutcome::Compromised) => warn!(
+                    triggers = %labels,
+                    "model output tripped the canary; session flagged compromised"
+                ),
+                Err(e) => warn!(triggers = %labels, error = %e, "autonomous assessment failed"),
+            }
+        }
+    }
 }
 
 /// Serial control-plane accept loop (v0.1). Never returns.
@@ -352,7 +473,7 @@ async fn serve_ctl_loop(
     listener: UnixListener,
     operator_uid: u32,
     operator_pub: ed25519_dalek::VerifyingKey,
-    mut orchestrator: Orchestrator<AnyBackend, SocketExecTransport, std::fs::File>,
+    orchestrator: SharedOrch,
 ) {
     loop {
         let (mut stream, _) = match listener.accept().await {
@@ -374,7 +495,10 @@ async fn serve_ctl_loop(
             }
         }
 
-        if let Err(e) = serve_connection(&mut stream, &operator_pub, &mut orchestrator).await {
+        // Lock for the duration of the operator's request so operator and
+        // autonomous actions never interleave (the executor is serial).
+        let mut orch = orchestrator.lock().await;
+        if let Err(e) = serve_connection(&mut stream, &operator_pub, &mut orch).await {
             warn!(error = %e, "control connection ended with error");
         }
     }
