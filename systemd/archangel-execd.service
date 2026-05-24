@@ -40,7 +40,9 @@ PrivateUsers=false
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
-ProtectControlGroups=false   # executor needs cgroup v2 to sandbox children
+# Executor needs cgroup v2 access to sandbox children (#11).
+# (systemd has no inline comments — this must be on its own line.)
+ProtectControlGroups=false
 ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
