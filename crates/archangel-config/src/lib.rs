@@ -248,6 +248,42 @@ impl Default for MonitorCfg {
     }
 }
 
+/// `[egress]` — layer #17 egress allowlist.
+///
+/// Fail-closed: `default_policy = "deny"` and only the listed `host` /
+/// `host:port` destinations are permitted. The allowlist is validated (each
+/// entry compiled by `archangel-egress`) at load, so a malformed entry
+/// refuses startup rather than silently widening egress.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct EgressCfg {
+    /// `"deny"` (default, secure) or `"allow"` (permit all — dev only).
+    pub default_policy: String,
+    /// Permitted destinations as `host` or `host:port`.
+    pub allow: Vec<String>,
+}
+
+impl Default for EgressCfg {
+    fn default() -> Self {
+        Self {
+            default_policy: "deny".to_owned(),
+            allow: Vec::new(),
+        }
+    }
+}
+
+impl EgressCfg {
+    /// Compile this config into an enforceable [`archangel_egress::EgressPolicy`].
+    ///
+    /// # Errors
+    /// Propagates [`archangel_egress::EgressError`] for a bad policy/entry.
+    pub fn to_policy(
+        &self,
+    ) -> Result<archangel_egress::EgressPolicy, archangel_egress::EgressError> {
+        archangel_egress::EgressPolicy::new(&self.default_policy, &self.allow)
+    }
+}
+
 /// The parsed, validated configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -270,6 +306,9 @@ pub struct Config {
     /// `[monitor]`.
     #[serde(default)]
     pub monitor: MonitorCfg,
+    /// `[egress]`.
+    #[serde(default)]
+    pub egress: EgressCfg,
 }
 
 impl Config {
@@ -350,6 +389,11 @@ impl Config {
             }
         }
 
+        // Egress allowlist (#17) must compile; a malformed entry is a refusal.
+        self.egress
+            .to_policy()
+            .map_err(|e| ConfigError::Invalid(format!("egress: {e}")))?;
+
         Ok(())
     }
 }
@@ -393,6 +437,40 @@ daemon_uid   = 1000
     fn missing_operator_uid_is_rejected() {
         let bad = MINIMAL.replace("operator_uid = 1000\n", "");
         assert!(Config::from_toml(&bad).is_err(), "uid is required");
+    }
+
+    #[test]
+    fn egress_defaults_to_deny_all() {
+        let c = Config::from_toml(MINIMAL).expect("valid");
+        assert_eq!(c.egress.default_policy, "deny");
+        assert!(c.egress.allow.is_empty());
+        let pol = c.egress.to_policy().expect("compiles");
+        assert!(
+            !pol.is_allowed("api.anthropic.com", 443),
+            "deny-all by default"
+        );
+    }
+
+    #[test]
+    fn egress_allowlist_parses_and_compiles() {
+        let f = format!(
+            "{MINIMAL}\n[egress]\ndefault_policy = \"deny\"\n\
+             allow = [\"api.anthropic.com\", \"127.0.0.1:11434\"]\n"
+        );
+        let c = Config::from_toml(&f).expect("valid");
+        let pol = c.egress.to_policy().expect("compiles");
+        assert!(pol.is_allowed("api.anthropic.com", 443));
+        assert!(pol.is_allowed("127.0.0.1", 11434));
+        assert!(!pol.is_allowed("127.0.0.1", 22));
+    }
+
+    #[test]
+    fn malformed_egress_entry_refuses_startup() {
+        let f = format!("{MINIMAL}\n[egress]\nallow = [\"host:notaport\"]\n");
+        assert!(
+            Config::from_toml(&f).is_err(),
+            "a bad egress entry must fail config validation (fail-closed)"
+        );
     }
 
     #[test]

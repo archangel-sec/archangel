@@ -90,6 +90,7 @@ name = "archangel-config"
 version = "0.0.0"
 dependencies = [
  "archangel-core",
+ "archangel-egress",
  "serde",
  "thiserror 1.0.69",
  "toml",
@@ -117,6 +118,13 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "archangel-egress"
+version = "0.0.0"
+dependencies = [
+ "thiserror 1.0.69",
 ]
 
 [[package]]

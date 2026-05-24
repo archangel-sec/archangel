@@ -1,6 +1,6 @@
 [package]
-name = "archangel-config"
-description = "Shared, fail-closed configuration schema for the archangel daemon and executor."
+name = "archangel-egress"
+description = "Egress allowlist policy for archangel (threat-model layer #17)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,8 +16,4 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-archangel-core = { workspace = true }
-archangel-egress = { workspace = true }
-serde = { workspace = true }
-toml = { workspace = true }
 thiserror = { workspace = true }

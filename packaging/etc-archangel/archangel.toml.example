@@ -123,8 +123,15 @@ enabled = true
 preferred_backend = "btrfs"
 
 [egress]
-# Layer #17. Kernel-level egress filtering for both the daemon and sandboxed
-# actions. Defaults are restrictive.
+# Layer #17 — egress allowlist. Fail-closed: "deny" means only the hosts
+# listed below may be reached. Entries are "host" (any port) or "host:port";
+# matching is exact and case-insensitive (no implicit subdomains). The list
+# is validated at startup (a malformed entry refuses to start).
+#
+# NOTE (v0.3): this is the egress *decision* (parsed + validated). The
+# structural enforcement that makes a denied connection impossible is still
+# in progress (see docs/EGRESS.md); until it lands, the daemon's egress is
+# bounded by the systemd unit's IPAddressDeny/IPAddressAllow.
 default_policy = "deny"
 allow = [
     # LLM endpoints — adjust to your active backend.

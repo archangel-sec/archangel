@@ -11,6 +11,7 @@ members = [
     "crates/archangel-sandbox",
     "crates/archangel-exec-format",
     "crates/archangel-snapshot",
+    "crates/archangel-egress",
     "crates/archangeld",
     "crates/archangel-execd",
     "crates/archangelctl",
@@ -44,6 +45,7 @@ archangel-llm = { path = "crates/archangel-llm", version = "0.0.0" }
 archangel-sandbox = { path = "crates/archangel-sandbox", version = "0.0.0" }
 archangel-exec-format = { path = "crates/archangel-exec-format", version = "0.0.0" }
 archangel-snapshot = { path = "crates/archangel-snapshot", version = "0.0.0" }
+archangel-egress = { path = "crates/archangel-egress", version = "0.0.0" }
 archangel-execd = { path = "crates/archangel-execd", version = "0.0.0" }
 
 # Async runtime
