@@ -17,6 +17,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// Autonomous monitoring driver: sense + dedup → actionable alerts.
+pub mod autoloop;
 /// Real-time log monitoring (sensory foundation; logs are hostile, T6).
 pub mod monitor;
 /// The read-only orchestration pipeline.
@@ -33,6 +35,7 @@ pub mod session;
 pub mod transport;
 
 pub use archangel_config::{Config, ConfigError};
+pub use autoloop::{fingerprint, MonitorDriver, AUTONOMOUS_TASK};
 pub use monitor::{
     Alert, CooldownGate, LogEvent, LogMatcher, LogMonitor, LogTailer, MonitorError, MonitorLimits,
     Pattern,
